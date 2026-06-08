@@ -36,6 +36,7 @@ type ListenOptions = CorsOptions & {
   hostname: string
   mdns?: boolean
   mdnsDomain?: string
+  disableWebUiRoutes?: boolean
 }
 type ListenerState = {
   scope: Scope.Scope

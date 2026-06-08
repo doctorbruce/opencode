@@ -28,6 +28,8 @@ describe("RuntimeFlags", () => {
             OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true",
             OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
             OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
+            OPENCODE_DISABLE_WRITE_FORMAT: "true",
+            OPENCODE_DISABLE_WRITE_DIAGNOSTICS: "true",
             OPENCODE_EXPERIMENTAL: "true",
             OPENCODE_ENABLE_EXA: "true",
             OPENCODE_ENABLE_PARALLEL: "true",
@@ -44,6 +46,8 @@ describe("RuntimeFlags", () => {
       expect(flags.disableEmbeddedWebUi).toBe(true)
       expect(flags.disableExternalSkills).toBe(true)
       expect(flags.disableLspDownload).toBe(true)
+      expect(flags.disableWriteFormat).toBe(true)
+      expect(flags.disableWriteDiagnostics).toBe(true)
       expect(flags.disableClaudeCodePrompt).toBe(false)
       expect(flags.enableExa).toBe(true)
       expect(flags.enableParallel).toBe(true)

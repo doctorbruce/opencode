@@ -26,7 +26,6 @@ import {
 } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { Reference } from "@/reference/reference"
-import { RepositoryCache } from "@/reference/repository-cache"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
 
@@ -48,7 +47,6 @@ const ctx = {
 const referenceLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   Reference.layer.pipe(
     Layer.provide(Config.defaultLayer),
-    Layer.provide(RepositoryCache.defaultLayer),
     Layer.provide(RuntimeFlags.layer(flags)),
   )
 
@@ -104,36 +102,6 @@ const fail = Effect.fn("ReadToolTest.fail")(function* (
 const full = (p: string) => (process.platform === "win32" ? Filesystem.normalizePath(p) : p)
 const glob = (p: string) =>
   process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
-const githubBase = <A, E, R>(url: string, self: Effect.Effect<A, E, R>) =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-      process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = url
-      return previous
-    }),
-    () => self,
-    (previous) =>
-      Effect.sync(() => {
-        if (previous) process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = previous
-        else delete process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-      }),
-  )
-const git = Effect.fn("ReadToolTest.git")(function* (cwd: string, args: string[]) {
-  return yield* Effect.promise(async () => {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    if (code !== 0) throw new Error(stderr.trim() || stdout.trim() || `git ${args.join(" ")} failed`)
-    return stdout.trim()
-  })
-})
 const put = Effect.fn("ReadToolTest.put")(function* (p: string, content: string | Buffer | Uint8Array) {
   const fs = yield* FSUtil.Service
   yield* fs.writeWithDirs(p, content)
@@ -272,16 +240,7 @@ describe("tool.read external_directory permission", () => {
       const cache = path.join(Global.Path.repos, "github.com", "opencode-read-reference", "repo")
       yield* fs.remove(cache, { recursive: true }).pipe(Effect.ignore)
       yield* Effect.addFinalizer(() => fs.remove(cache, { recursive: true }).pipe(Effect.ignore))
-
-      const source = yield* tmpdirScoped({ git: true })
-      const remoteRoot = yield* tmpdirScoped()
-      const remoteDir = path.join(remoteRoot, "opencode-read-reference")
-      const remoteRepo = path.join(remoteDir, "repo.git")
-      yield* put(path.join(source, "notes.md"), "reference notes")
-      yield* git(source, ["add", "."])
-      yield* git(source, ["commit", "-m", "add notes"])
-      yield* fs.makeDirectory(remoteDir, { recursive: true }).pipe(Effect.orDie)
-      yield* git(remoteRoot, ["clone", "--bare", source, remoteRepo])
+      yield* put(path.join(cache, "notes.md"), "reference notes")
 
       const dir = yield* tmpdirScoped({
         git: true,
@@ -293,10 +252,7 @@ describe("tool.read external_directory permission", () => {
       })
 
       const { items, next } = asks()
-      const result = yield* githubBase(
-        `file://${remoteRoot}/`,
-        exec(dir, { filePath: path.join(cache, "notes.md") }, next),
-      )
+      const result = yield* exec(dir, { filePath: path.join(cache, "notes.md") }, next)
       const ext = items.find((item) => item.permission === "external_directory")
 
       expect(result.output).toContain("reference notes")

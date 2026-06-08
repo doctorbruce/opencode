@@ -237,6 +237,9 @@ export const ReadTool = Tool.define<
     ) {
       const instance = yield* InstanceState.context
       let filepath = params.filePath
+      if (process.platform === "win32" && /^[/\\](?![/\\])/.test(filepath)) {
+        filepath = path.join(path.parse(instance.directory).root, filepath.slice(1))
+      }
       if (!path.isAbsolute(filepath)) {
         filepath = path.resolve(instance.directory, filepath)
       }

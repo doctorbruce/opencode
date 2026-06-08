@@ -14,6 +14,7 @@ import { SessionID, MessageID } from "../../src/session/schema"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 
 const ctx = {
   sessionID: SessionID.make("ses_test-write-session"),
@@ -39,6 +40,7 @@ const it = testEffect(
     CrossSpawnSpawner.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
+    RuntimeFlags.defaultLayer,
   ),
 )
 
@@ -55,7 +57,70 @@ const run = Effect.fn("WriteToolTest.run")(function* (
   return yield* tool.execute(args, next)
 })
 
+const fakeLsp = (calls: { touch: number; diagnostics: number }) =>
+  LSP.Service.of({
+    init: () => Effect.void,
+    status: () => Effect.succeed([]),
+    hasClients: () => Effect.succeed(true),
+    touchFile: () =>
+      Effect.sync(() => {
+        calls.touch++
+      }),
+    diagnostics: () =>
+      Effect.sync(() => {
+        calls.diagnostics++
+        return {}
+      }),
+    hover: () => Effect.succeed(null),
+    definition: () => Effect.succeed([]),
+    references: () => Effect.succeed([]),
+    implementation: () => Effect.succeed([]),
+    documentSymbol: () => Effect.succeed([]),
+    workspaceSymbol: () => Effect.succeed([]),
+    prepareCallHierarchy: () => Effect.succeed([]),
+    incomingCalls: () => Effect.succeed([]),
+    outgoingCalls: () => Effect.succeed([]),
+  })
+
+const fakeFormat = (calls: { format: number }) =>
+  Format.Service.of({
+    init: () => Effect.void,
+    status: () => Effect.succeed([]),
+    file: () =>
+      Effect.sync(() => {
+        calls.format++
+        return false
+      }),
+  })
+
 describe("tool.write", () => {
+  describe("fast write flags", () => {
+    it.instance("skips formatter and LSP diagnostics when disabled", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const flags = yield* RuntimeFlags.Service
+        const lspCalls = { touch: 0, diagnostics: 0 }
+        const formatCalls = { format: 0 }
+        const filepath = path.join(test.directory, "fast.ts")
+        const result = yield* run({ filePath: filepath, content: "export const fast = true\n" }).pipe(
+          Effect.provideService(RuntimeFlags.Service, {
+            ...flags,
+            disableWriteFormat: true,
+            disableWriteDiagnostics: true,
+          }),
+          Effect.provideService(LSP.Service, fakeLsp(lspCalls)),
+          Effect.provideService(Format.Service, fakeFormat(formatCalls)),
+        )
+
+        expect(result.output).toBe("Wrote file successfully.")
+        expect(result.metadata.diagnostics).toEqual({})
+        expect(formatCalls.format).toBe(0)
+        expect(lspCalls.touch).toBe(0)
+        expect(lspCalls.diagnostics).toBe(0)
+      }),
+    )
+  })
+
   describe("new file creation", () => {
     it.instance("writes content to new file", () =>
       Effect.gen(function* () {

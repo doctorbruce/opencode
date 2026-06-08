@@ -7,9 +7,7 @@ import { Global } from "@opencode-ai/core/global"
 import { Config } from "../../src/config/config"
 import { ConfigReference } from "../../src/config/reference"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
-import { Git } from "../../src/git"
 import { Reference } from "../../src/reference/reference"
-import { RepositoryCache } from "../../src/reference/repository-cache"
 import { disposeAllInstances, provideTmpdirInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -20,18 +18,16 @@ afterEach(async () => {
 const referenceLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   Reference.layer.pipe(
     Layer.provide(Config.defaultLayer),
-    Layer.provide(RepositoryCache.defaultLayer),
     Layer.provide(RuntimeFlags.layer(flags)),
   )
 
 const it = testEffect(
-  Layer.mergeAll(FSUtil.defaultLayer, CrossSpawnSpawner.defaultLayer, Git.defaultLayer, referenceLayer()),
+  Layer.mergeAll(FSUtil.defaultLayer, CrossSpawnSpawner.defaultLayer, referenceLayer()),
 )
 const references = testEffect(
   Layer.mergeAll(
     FSUtil.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
-    Git.defaultLayer,
     referenceLayer({ experimentalReferences: true }),
   ),
 )
@@ -67,19 +63,6 @@ const git = Effect.fn("ReferenceTest.git")(function* (cwd: string, args: string[
     return stdout.trim()
   })
 })
-
-const waitForContent = (
-  fs: FSUtil.Interface,
-  file: string,
-  content: string,
-  attempts = 50,
-): Effect.Effect<void, FSUtil.Error> =>
-  Effect.gen(function* () {
-    if ((yield* fs.readFileStringSafe(file)) === content) return
-    if (attempts <= 0) throw new Error(`timed out waiting for ${file}`)
-    yield* Effect.sleep("100 millis")
-    yield* waitForContent(fs, file, content, attempts - 1)
-  })
 
 describe("reference", () => {
   it.live("resolves supported local and git config forms", () =>
@@ -197,7 +180,7 @@ describe("reference", () => {
     }),
   )
 
-  references.live("materializes configured git references during init", () =>
+  references.live("does not materialize configured git references when ensured by path", () =>
     provideTmpdirInstance(
       (_dir) =>
         Effect.gen(function* () {
@@ -221,13 +204,12 @@ describe("reference", () => {
           yield* githubBase(
             `file://${remoteRoot}/`,
             Effect.gen(function* () {
-              yield* reference.init()
-              yield* waitForContent(fs, path.join(cache, "README.md"), "configured\n")
+              yield* reference.ensure(path.join(cache, "README.md"))
             }),
           )
 
-          expect(yield* fs.existsSafe(path.join(cache, ".git"))).toBe(true)
-          expect(yield* fs.readFileString(path.join(cache, "README.md"))).toBe("configured\n")
+          expect(yield* fs.existsSafe(path.join(cache, ".git"))).toBe(false)
+          expect(yield* fs.existsSafe(path.join(cache, "README.md"))).toBe(false)
 
           const resolved = yield* reference.get("docs")
           expect(resolved?.kind).toBe("git")
@@ -243,7 +225,7 @@ describe("reference", () => {
     ),
   )
 
-  references.live("refreshes configured git references on new instance init", () =>
+  references.live("does not refresh existing configured git reference caches when ensured by path", () =>
     Effect.gen(function* () {
       const fs = yield* FSUtil.Service
       const cache = path.join(Global.Path.repos, "github.com", "opencode-reference-refresh", "repo")
@@ -260,6 +242,7 @@ describe("reference", () => {
       yield* git(source, ["commit", "-m", "add readme"])
       yield* fs.makeDirectory(remoteDir, { recursive: true }).pipe(Effect.orDie)
       yield* git(remoteRoot, ["clone", "--bare", source, remoteRepo])
+      yield* fs.writeWithDirs(path.join(cache, "README.md"), "cached\n")
 
       yield* githubBase(
         `file://${remoteRoot}/`,
@@ -267,8 +250,7 @@ describe("reference", () => {
           (_dir) =>
             Effect.gen(function* () {
               const reference = yield* Reference.Service
-              yield* reference.init()
-              yield* waitForContent(fs, path.join(cache, "README.md"), "v1\n")
+              yield* reference.ensure(path.join(cache, "README.md"))
             }),
           {
             config: {
@@ -280,31 +262,7 @@ describe("reference", () => {
         ),
       )
 
-      const branch = yield* git(source, ["branch", "--show-current"])
-      yield* git(source, ["remote", "add", "origin", remoteRepo])
-      yield* Effect.promise(() => Bun.write(path.join(source, "README.md"), "v2\n"))
-      yield* git(source, ["add", "."])
-      yield* git(source, ["commit", "-m", "update readme"])
-      yield* git(source, ["push", "origin", `${branch}:${branch}`])
-
-      yield* githubBase(
-        `file://${remoteRoot}/`,
-        provideTmpdirInstance(
-          (_dir) =>
-            Effect.gen(function* () {
-              const reference = yield* Reference.Service
-              yield* reference.init()
-              yield* waitForContent(fs, path.join(cache, "README.md"), "v2\n")
-            }),
-          {
-            config: {
-              reference: {
-                docs: "opencode-reference-refresh/repo",
-              },
-            },
-          },
-        ),
-      )
+      expect(yield* fs.readFileString(path.join(cache, "README.md"))).toBe("cached\n")
     }),
   )
 })

@@ -14,6 +14,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { trimDiff } from "./edit"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import * as Bom from "@/util/bom"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
@@ -31,6 +32,7 @@ export const WriteTool = Tool.define(
     const fs = yield* FSUtil.Service
     const events = yield* EventV2Bridge.Service
     const format = yield* Format.Service
+    const flags = yield* RuntimeFlags.Service
 
     return {
       description: DESCRIPTION,
@@ -62,7 +64,7 @@ export const WriteTool = Tool.define(
           })
 
           yield* fs.writeWithDirs(filepath, Bom.join(contentNew, desiredBom))
-          if (yield* format.file(filepath)) {
+          if (!flags.disableWriteFormat && (yield* format.file(filepath))) {
             yield* Bom.syncFile(fs, filepath, desiredBom)
           }
           yield* events.publish(FileSystem.Event.Edited, { file: filepath })
@@ -72,6 +74,18 @@ export const WriteTool = Tool.define(
           })
 
           let output = "Wrote file successfully."
+          if (flags.disableWriteDiagnostics) {
+            return {
+              title: path.relative(instance.worktree, filepath),
+              metadata: {
+                diagnostics: {},
+                filepath,
+                exists: exists,
+              },
+              output,
+            }
+          }
+
           yield* lsp.touchFile(filepath, "document")
           const diagnostics = yield* lsp.diagnostics()
           const normalizedFilepath = FSUtil.normalizePath(filepath)

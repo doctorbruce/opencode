@@ -3,6 +3,10 @@ import { effectCmd } from "../effect-cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "@opencode-ai/core/flag/flag"
 
+export function shouldDisableWebUiRoutes(env: Record<string, string | undefined> = process.env) {
+  return env.OPENCODE_DISABLE_WEB_UI_ROUTES === "1"
+}
+
 export const ServeCommand = effectCmd({
   command: "serve",
   builder: (yargs) => withNetworkOptions(yargs),
@@ -16,7 +20,7 @@ export const ServeCommand = effectCmd({
       console.log("Warning: OPENCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
     const opts = yield* resolveNetworkOptions(args)
-    const server = yield* Effect.promise(() => Server.listen(opts))
+    const server = yield* Effect.promise(() => Server.listen({ ...opts, disableWebUiRoutes: shouldDisableWebUiRoutes() }))
     console.log(`opencode server listening on http://${server.hostname}:${server.port}`)
 
     yield* Effect.never

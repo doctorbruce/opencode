@@ -58,7 +58,6 @@ import { Vcs } from "@/project/vcs"
 import { Worktree } from "@/worktree"
 import { Workspace } from "@/control-plane/workspace"
 import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@/server/cors"
-import { serveUIEffect } from "@/server/shared/ui"
 import { ServerAuth } from "@/server/auth"
 import { InstanceHttpApi, RootHttpApi } from "./api"
 import { Api } from "@opencode-ai/server/api"
@@ -184,7 +183,10 @@ const uiRoute = HttpRouter.use((router) =>
     const client = yield* HttpClient.HttpClient
     const flags = yield* RuntimeFlags.Service
     yield* router.add("*", "/*", (request) =>
-      serveUIEffect(request, { fs, client, disableEmbeddedWebUi: flags.disableEmbeddedWebUi }),
+      Effect.gen(function* () {
+        const { serveUIEffect } = yield* Effect.promise(() => import("@/server/shared/ui"))
+        return yield* serveUIEffect(request, { fs, client, disableEmbeddedWebUi: flags.disableEmbeddedWebUi })
+      }),
     )
   }),
 ).pipe(Layer.provide(authOnlyRouterLayer))
@@ -196,9 +198,15 @@ type RouteRequirements =
   | HttpRouter.Request<"Requires", unknown>
   | HttpRouter.Request<"GlobalRequires", never>
 
-export function createRoutes(
-  corsOptions?: CorsOptions,
-): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
+type RouteOptions = CorsOptions & {
+  disableWebUiRoutes?: boolean
+}
+
+export function shouldServeWebUiRoutes(options?: Pick<RouteOptions, "disableWebUiRoutes">) {
+  return options?.disableWebUiRoutes !== true
+}
+
+export function createRoutes(routeOptions?: RouteOptions): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
   return Layer.mergeAll(
     rootApiRoutes,
     eventApiRoutes,
@@ -206,14 +214,14 @@ export function createRoutes(
     instanceRoutes,
     serverRoutes,
     docRoute,
-    uiRoute,
+    ...(shouldServeWebUiRoutes(routeOptions) ? [uiRoute] : []),
   ).pipe(
     Layer.provide([
       errorLayer,
       compressionLayer,
       corsVaryFix,
       fenceLayer.pipe(Layer.provide(Database.defaultLayer)),
-      cors(corsOptions),
+      cors(routeOptions),
       Database.defaultLayer,
       Account.defaultLayer,
       Agent.defaultLayer,
@@ -262,7 +270,7 @@ export function createRoutes(
       FetchHttpClient.layer,
       HttpServer.layerServices,
     ]),
-    Layer.provide(Layer.succeed(CorsConfig)(corsOptions)),
+    Layer.provide(Layer.succeed(CorsConfig)(routeOptions)),
     Layer.provide(InstanceLayer.layer),
     Layer.provide(Observability.layer),
   )

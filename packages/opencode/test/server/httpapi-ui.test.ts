@@ -16,7 +16,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { RuntimeFlags } from "../../src/effect/runtime-flags"
 import { ServerAuth } from "../../src/server/auth"
 import { authorizationRouterMiddleware } from "../../src/server/routes/instance/httpapi/middleware/authorization"
-import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
+import { HttpApiApp, shouldServeWebUiRoutes } from "../../src/server/routes/instance/httpapi/server"
 import { serveEmbeddedUIEffect, serveUIEffect } from "../../src/server/shared/ui"
 import { testEffect } from "../lib/effect"
 
@@ -184,6 +184,13 @@ function responseText(response: Response) {
 }
 
 describe("HttpApi UI fallback", () => {
+  it.live("can be disabled for serve-only runtime builds", () =>
+    Effect.sync(() => {
+      expect(shouldServeWebUiRoutes({ disableWebUiRoutes: true })).toBe(false)
+      expect(shouldServeWebUiRoutes()).toBe(true)
+    }),
+  )
+
   it.live("serves the web UI through the HTTP API app", () =>
     Effect.gen(function* () {
       let proxiedUrl: string | undefined

@@ -5,7 +5,7 @@ import os from "os"
 import path from "path"
 import { Effect, Layer } from "effect"
 import { GrepTool } from "../../src/tool/grep"
-import { provideInstance, testInstanceStoreLayer, TestInstance, tmpdirScoped } from "../fixture/fixture"
+import { provideInstance, testInstanceStoreLayer, TestInstance } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Global } from "@opencode-ai/core/global"
@@ -15,18 +15,15 @@ import { Search } from "@opencode-ai/core/filesystem/search"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { testEffect } from "../lib/effect"
 import { Reference } from "@/reference/reference"
-import { RepositoryCache } from "@/reference/repository-cache"
 import { Permission } from "../../src/permission"
 import type * as Tool from "../../src/tool/tool"
 import { Config } from "@/config/config"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Git } from "@/git"
 import { Filesystem } from "@/util/filesystem"
 
 const referenceLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   Reference.layer.pipe(
     Layer.provide(Config.defaultLayer),
-    Layer.provide(RepositoryCache.defaultLayer),
     Layer.provide(RuntimeFlags.layer(flags)),
   )
 
@@ -37,7 +34,6 @@ const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
     Search.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
-    Git.defaultLayer,
     referenceLayer(flags),
   )
 
@@ -58,38 +54,6 @@ const ctx = {
 
 const root = path.join(__dirname, "../..")
 const full = (p: string) => (process.platform === "win32" ? Filesystem.normalizePath(p) : p)
-
-const githubBase = <A, E, R>(url: string, self: Effect.Effect<A, E, R>) =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-      process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = url
-      return previous
-    }),
-    () => self,
-    (previous) =>
-      Effect.sync(() => {
-        if (previous) process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = previous
-        else delete process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
-      }),
-  )
-
-const git = Effect.fn("GrepToolTest.git")(function* (cwd: string, args: string[]) {
-  return yield* Effect.promise(async () => {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    if (code !== 0) throw new Error(stderr.trim() || stdout.trim() || `git ${args.join(" ")} failed`)
-    return stdout.trim()
-  })
-})
 
 describe("tool.grep", () => {
   rooted.live("basic search", () =>
@@ -224,16 +188,7 @@ describe("tool.grep", () => {
         const cache = path.join(Global.Path.repos, "github.com", "opencode-grep-reference", "repo")
         yield* appfs.remove(cache, { recursive: true }).pipe(Effect.ignore)
         yield* Effect.addFinalizer(() => appfs.remove(cache, { recursive: true }).pipe(Effect.ignore))
-
-        const source = yield* tmpdirScoped({ git: true })
-        const remoteRoot = yield* tmpdirScoped()
-        const remoteDir = path.join(remoteRoot, "opencode-grep-reference")
-        const remoteRepo = path.join(remoteDir, "repo.git")
-        yield* appfs.writeWithDirs(path.join(source, "src", "notes.md"), "needle\n")
-        yield* git(source, ["add", "."])
-        yield* git(source, ["commit", "-m", "add notes"])
-        yield* appfs.makeDirectory(remoteDir, { recursive: true }).pipe(Effect.orDie)
-        yield* git(remoteRoot, ["clone", "--bare", source, remoteRepo])
+        yield* appfs.writeWithDirs(path.join(cache, "src", "notes.md"), "needle\n")
 
         const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
         const next: Tool.Context = {
@@ -246,10 +201,7 @@ describe("tool.grep", () => {
 
         const info = yield* GrepTool
         const grep = yield* info.init()
-        const result = yield* githubBase(
-          `file://${remoteRoot}/`,
-          grep.execute({ pattern: "needle", path: path.join(cache, "src"), include: "*.md" }, next),
-        )
+        const result = yield* grep.execute({ pattern: "needle", path: path.join(cache, "src"), include: "*.md" }, next)
 
         expect(result.metadata.matches).toBe(1)
         expect(full(result.output)).toContain(full(path.join(cache, "src", "notes.md")))
