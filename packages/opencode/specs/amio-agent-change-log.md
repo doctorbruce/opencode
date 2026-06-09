@@ -71,3 +71,22 @@ bun typecheck
 bun run script/build.ts --single --amio-agent --skip-install
 ```
 
+## 2026-06-08
+
+### Continue prompt loop on unknown finish
+
+- Fixed prompt loop handling for assistant messages with `finish="unknown"`.
+- The outer loop no longer treats `unknown` as a confirmed terminal finish when there are no pending tool calls.
+- This prevents silent early exits after empty or unrecognized provider stream finishes.
+- Added a regression test that queues an `unknown` finish followed by a normal model response and verifies the loop continues to the second request.
+
+### Stable amio-agent build version
+
+- `--amio-agent` builds now default `OPENCODE_VERSION` to `packages/opencode/package.json` version when the env var is not explicitly set.
+- This makes `amio-agent --version` return a published npm-compatible version such as `1.16.2` instead of `0.0.0-dev-...`.
+- Explicit `OPENCODE_VERSION=...` still wins for custom builds.
+- Standard opencode dev builds keep the original preview version behavior.
+- `script/build.ts` now accepts `--target-os=win32,darwin` so sidecar builds can skip Linux cross-runtime downloads when only desktop Windows and macOS packages are needed.
+- `script/build.ts` now accepts `--compile-executable-dir=<dir>` for predownloaded Bun runtimes, using `<dir>/bun-darwin-arm64/bun` and similar target folders to work around interrupted GitHub runtime downloads.
+
+

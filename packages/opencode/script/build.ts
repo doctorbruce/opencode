@@ -4,7 +4,14 @@ import { $ } from "bun"
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { buildBinaryName, buildEntrypoints } from "./build-target"
+import pkg from "../package.json"
+import {
+  buildBinaryName,
+  buildEntrypoints,
+  parseTargetOS,
+  resolveBuildVersion,
+  resolveCompileExecutablePath,
+} from "./build_target"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -12,16 +19,25 @@ const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
 
-const generated = await import("./generate.ts")
-
-import { Script } from "@opencode-ai/script"
-import pkg from "../package.json"
-
 const singleFlag = process.argv.includes("--single")
 const baselineFlag = process.argv.includes("--baseline")
 const amioAgentFlag = process.argv.includes("--amio-agent")
 const skipInstall = process.argv.includes("--skip-install")
 const sourcemapsFlag = process.argv.includes("--sourcemaps")
+const targetOS = parseTargetOS(process.argv.find((arg) => arg.startsWith("--target-os="))?.slice("--target-os=".length))
+const compileExecutableDir = process.argv
+  .find((arg) => arg.startsWith("--compile-executable-dir="))
+  ?.slice("--compile-executable-dir=".length)
+const buildVersion = resolveBuildVersion({
+  amioAgent: amioAgentFlag,
+  envVersion: process.env.OPENCODE_VERSION,
+  packageVersion: pkg.version,
+})
+if (buildVersion) process.env.OPENCODE_VERSION = buildVersion
+
+const generated = await import("./generate.ts")
+const { Script } = await import("@opencode-ai/script")
+
 const plugin = amioAgentFlag ? undefined : (await import("@opentui/solid/bun-plugin")).createSolidTransformPlugin()
 const skipEmbedWebUi = amioAgentFlag || process.argv.includes("--skip-embed-web-ui")
 
@@ -114,7 +130,7 @@ const allTargets: {
   },
 ]
 
-const targets = singleFlag
+const targets = (singleFlag
   ? allTargets.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
         return false
@@ -133,7 +149,9 @@ const targets = singleFlag
 
       return true
     })
-  : allTargets
+  : allTargets).filter((item) => !targetOS || targetOS.includes(item.os))
+
+if (targets.length === 0) throw new Error("No build targets selected")
 
 await $`rm -rf dist`
 
@@ -167,6 +185,15 @@ for (const item of targets) {
   const bunfsRoot = item.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/"
   const workerRelativePath = parserWorker ? path.relative(dir, parserWorker).replaceAll("\\", "/") : ""
   const binaryName = buildBinaryName(amioAgentFlag)
+  const compileTarget = name.replace(pkg.name, "bun")
+  const compileExecutablePath = resolveCompileExecutablePath({
+    executableDir: compileExecutableDir,
+    target: compileTarget,
+    windows: item.os === "win32",
+  })
+  if (compileExecutablePath && !fs.existsSync(compileExecutablePath)) {
+    throw new Error(`Missing Bun executable for ${compileTarget}: ${compileExecutablePath}`)
+  }
 
   await Bun.build({
     conditions: ["node"],
@@ -182,9 +209,10 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(pkg.name, "bun") as any,
+      target: compileTarget as any,
       outfile: `dist/${name}/bin/${binaryName}`,
       execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
+      ...(compileExecutablePath ? { executablePath: compileExecutablePath } : {}),
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},

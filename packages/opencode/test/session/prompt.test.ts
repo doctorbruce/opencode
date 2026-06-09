@@ -55,7 +55,7 @@ import { Reference } from "../../src/reference/reference"
 import { RepositoryCache } from "../../src/reference/repository-cache"
 import { TestInstance } from "../fixture/fixture"
 import { awaitWithTimeout, pollWithTimeout, testEffect } from "../lib/effect"
-import { reply, TestLLMServer } from "../lib/llm-server"
+import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -674,6 +674,49 @@ it.instance("loop continues when finish is tool-calls", () =>
       parts: [{ type: "text", text: "hello" }],
     })
     yield* llm.tool("first", { value: "first" })
+    yield* llm.text("second")
+
+    const result = yield* prompt.loop({ sessionID: session.id })
+    expect(yield* llm.calls).toBe(2)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.parts.some((part) => part.type === "text" && part.text === "second")).toBe(true)
+      expect(result.info.finish).toBe("stop")
+    }
+  }),
+)
+
+it.instance("loop continues when finish is unknown", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const session = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* prompt.prompt({
+      sessionID: session.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.push(
+      raw({
+        chunks: [
+          {
+            id: "chatcmpl-test",
+            object: "chat.completion.chunk",
+            choices: [{ delta: { role: "assistant" } }],
+          },
+          {
+            id: "chatcmpl-test",
+            object: "chat.completion.chunk",
+            choices: [{ delta: {}, finish_reason: "other" }],
+          },
+        ],
+      }),
+    )
     yield* llm.text("second")
 
     const result = yield* prompt.loop({ sessionID: session.id })
