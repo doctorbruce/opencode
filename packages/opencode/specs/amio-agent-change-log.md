@@ -89,4 +89,12 @@ bun run script/build.ts --single --amio-agent --skip-install
 - `script/build.ts` now accepts `--target-os=win32,darwin` so sidecar builds can skip Linux cross-runtime downloads when only desktop Windows and macOS packages are needed.
 - `script/build.ts` now accepts `--compile-executable-dir=<dir>` for predownloaded Bun runtimes, using `<dir>/bun-darwin-arm64/bun` and similar target folders to work around interrupted GitHub runtime downloads.
 
+## 2026-06-11
 
+### Prompt-scoped completion events
+
+- Added opencode `prompt.completed` and `prompt.failed` EventV2 events from `SessionPrompt.prompt`.
+- `prompt.completed` includes `sessionID`, `promptID`, `userMessageID`, `assistantMessageID`, and `stopReason`.
+- `prompt.failed` includes `sessionID`, `promptID`, `userMessageID`, optional `assistantMessageID`, and a normalized error payload.
+- These events let the Astron sidecar finish a specific `session/prompt` request from prompt-scoped runtime events instead of inferring completion from deprecated `session.idle`.
+- `session.idle` should now be treated as session status only by the Astron adapter; prompt result/error handling should use the new prompt events.

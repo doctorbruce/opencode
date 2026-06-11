@@ -514,6 +514,94 @@ it.instance("loop calls LLM and returns assistant message", () =>
   }),
 )
 
+it.instance("prompt emits a prompt-scoped completed event", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const events = yield* EventV2Bridge.Service
+    const received = yield* Deferred.make<Record<string, unknown>>()
+    const chat = yield* sessions.create({
+      title: "Prompt event",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    const unsubscribe = yield* events.listen((event) => {
+      if (event.type === "prompt.completed")
+        Deferred.doneUnsafe(received, Effect.succeed(event.data as Record<string, unknown>))
+      return Effect.void
+    })
+    yield* Effect.addFinalizer(() => unsubscribe)
+
+    yield* llm.text("world")
+    const result = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      parts: [{ type: "text", text: "hello" }],
+    })
+    const event = yield* awaitWithTimeout(
+      Deferred.await(received),
+      "timed out waiting for prompt.completed",
+      "2 seconds",
+    )
+
+    expect(event.sessionID).toBe(chat.id)
+    expect(typeof event.promptID).toBe("string")
+    expect(event.promptID).toBe(event.userMessageID)
+    expect(event.assistantMessageID).toBe(result.info.id)
+    expect(event.stopReason).toBe("end_turn")
+  }),
+)
+
+it.instance(
+  "prompt emits a prompt-scoped failed event when the assistant finishes with an error",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig((url) => ({
+        ...providerCfg(url),
+        compaction: { auto: false },
+      }))
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const events = yield* EventV2Bridge.Service
+      const received = yield* Deferred.make<Record<string, unknown>>()
+      const chat = yield* sessions.create({
+        title: "Prompt failed event",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      const unsubscribe = yield* events.listen((event) => {
+        if (event.type === "prompt.failed")
+          Deferred.doneUnsafe(received, Effect.succeed(event.data as Record<string, unknown>))
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsubscribe)
+
+      yield* llm.error(413, { error: { message: "request entity too large" } })
+      const result = yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        parts: [{ type: "text", text: "hello" }],
+      })
+      const event = yield* awaitWithTimeout(
+        Deferred.await(received),
+        "timed out waiting for prompt.failed",
+        "2 seconds",
+      )
+
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") expect(result.info.error).toBeDefined()
+      expect(event.sessionID).toBe(chat.id)
+      expect(typeof event.promptID).toBe("string")
+      expect(event.promptID).toBe(event.userMessageID)
+      expect(event.assistantMessageID).toBe(result.info.id)
+      expect(event.error).toMatchObject({
+        name: "ContextOverflowError",
+        message: expect.stringContaining("request entity too large"),
+      })
+    }),
+)
+
 it.instance("loop stops provider overflow instead of auto-compacting when disabled", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig((url) => ({

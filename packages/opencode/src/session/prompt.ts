@@ -49,6 +49,7 @@ import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { EventV2 } from "@opencode-ai/core/event"
 import { Database } from "@opencode-ai/core/database/database"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { SessionMessage } from "@opencode-ai/core/session/message"
@@ -1203,7 +1204,34 @@ export const layer = Layer.effect(
       }
 
       if (input.noReply === true) return message
-      return yield* loop({ sessionID: input.sessionID })
+      const result = yield* loop({ sessionID: input.sessionID }).pipe(Effect.exit)
+      if (Exit.isFailure(result)) {
+        yield* events.publish(Event.Failed, {
+          sessionID: input.sessionID,
+          promptID: message.info.id,
+          userMessageID: message.info.id,
+          error: promptError(result.cause),
+        })
+        return yield* Effect.failCause(result.cause)
+      }
+      if (result.value.info.role === "assistant" && result.value.info.error) {
+        yield* events.publish(Event.Failed, {
+          sessionID: input.sessionID,
+          promptID: message.info.id,
+          userMessageID: message.info.id,
+          assistantMessageID: result.value.info.id,
+          error: promptStoredError(result.value.info.error),
+        })
+        return result.value
+      }
+      yield* events.publish(Event.Completed, {
+        sessionID: input.sessionID,
+        promptID: message.info.id,
+        userMessageID: message.info.id,
+        assistantMessageID: result.value.info.id,
+        stopReason: "end_turn",
+      })
+      return result.value
     })
 
     const lastAssistant = Effect.fnUntraced(function* (sessionID: SessionID) {
@@ -1677,6 +1705,35 @@ export const PromptInput = Schema.Struct({
 })
 export type PromptInput = Schema.Schema.Type<typeof PromptInput>
 
+const PromptError = Schema.Struct({
+  name: Schema.optional(Schema.String),
+  message: Schema.String,
+  stack: Schema.optional(Schema.String),
+})
+
+export const Event = {
+  Completed: EventV2.define({
+    type: "prompt.completed",
+    schema: {
+      sessionID: SessionID,
+      promptID: MessageID,
+      userMessageID: MessageID,
+      assistantMessageID: MessageID,
+      stopReason: Schema.String,
+    },
+  }),
+  Failed: EventV2.define({
+    type: "prompt.failed",
+    schema: {
+      sessionID: SessionID,
+      promptID: MessageID,
+      userMessageID: MessageID,
+      assistantMessageID: Schema.optional(MessageID),
+      error: PromptError,
+    },
+  }),
+}
+
 export class LoopInput extends Schema.Class<LoopInput>("SessionPrompt.LoopInput")({
   sessionID: SessionID,
 }) {}
@@ -1746,6 +1803,39 @@ export function createStructuredOutputTool(input: {
     },
   })
 }
+
+function promptError(cause: Cause.Cause<unknown>) {
+  const error = Cause.squash(cause)
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      ...(error.stack ? { stack: error.stack } : {}),
+    }
+  }
+  return { message: Cause.pretty(cause) }
+}
+
+function promptStoredError(value: unknown) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      ...(value.stack ? { stack: value.stack } : {}),
+    }
+  }
+  if (value && typeof value === "object") {
+    const error = value as Record<string, unknown>
+    const message = typeof error.message === "string" ? error.message : JSON.stringify(value)
+    return {
+      ...(typeof error.name === "string" ? { name: error.name } : {}),
+      message,
+      ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
+    }
+  }
+  return { message: String(value) }
+}
+
 const bashRegex = /!`([^`]+)`/g
 // Match [Image N] as single token, quoted strings, or non-space sequences
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
