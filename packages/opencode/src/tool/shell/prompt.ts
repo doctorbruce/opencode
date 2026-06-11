@@ -51,20 +51,30 @@ function shellDisplayName(name: string) {
 function powershellNotes(name: string) {
   if (name === "pwsh") {
     return `# PowerShell (7+) shell notes
-- This cross-platform shell supports pipeline chain operators (\`&&\` and \`||\`).
+- Pipeline chain operators \`&&\` and \`||\` are available and work like bash.
+- Ternary (\`$cond ? $a : $b\`), null-coalescing (\`??\`), and null-conditional (\`?.\`) operators are available.
+- Default file encoding is UTF-8.
 - Use double quotes for interpolated strings (\`"Hello $name"\`), single quotes for verbatim strings.
+- When interpolating a variable immediately followed by a colon, use \`\${name}:\` or the \`-f\` format operator; \`"$p:"\` can be parsed as a scoped variable and fail.
 - Prefer full cmdlet names like \`Get-ChildItem\`, \`Set-Content\`, \`Remove-Item\`, and \`New-Item\` over aliases.
 - Use \`$(...)\` for subexpressions. Use \`@(...)\` for array expressions.
 - To call a native executable whose path contains spaces, use the call operator: \`& "path/to/exe" args\`.
+- For native executables, check \`$LASTEXITCODE\` when you need the process exit code; \`$?\` reflects the last PowerShell pipeline status.
 - Escape special characters with the PowerShell backtick character.`
   }
   if (name === "powershell") {
     return `# Windows PowerShell (5.1) shell notes
-- Use \`cmd1; if ($?) { cmd2 }\` to chain dependent commands.
+- Pipeline chain operators \`&&\` and \`||\` are NOT available. Use \`cmd1; if ($?) { cmd2 }\` to chain dependent commands.
+- Ternary (\`?:\`), null-coalescing (\`??\`), and null-conditional (\`?.\`) operators are NOT available. Use \`if\` statements and explicit \`$null\` checks.
+- Avoid \`2>&1\` on native executables. stderr is already captured separately, and PowerShell 5.1 can mark redirected native stderr as a failed pipeline even when the executable exits 0.
+- Default file encoding is UTF-16 LE. When writing files other tools will read, pass \`-Encoding utf8\` to \`Out-File\` or \`Set-Content\`.
+- \`ConvertFrom-Json -AsHashtable\` is not available.
 - Use double quotes for interpolated strings (\`"Hello $name"\`), single quotes for verbatim strings.
+- When interpolating a variable immediately followed by a colon, use \`\${name}:\` or the \`-f\` format operator; \`"$p:"\` can be parsed as a scoped variable and fail.
 - Prefer full cmdlet names like \`Get-ChildItem\`, \`Set-Content\`, \`Remove-Item\`, and \`New-Item\` over aliases.
 - Use \`$(...)\` for subexpressions. Use \`@(...)\` for array expressions.
 - To call a native executable whose path contains spaces, use the call operator: \`& "path/to/exe" args\`.
+- For native executables, check \`$LASTEXITCODE\` when you need the process exit code; \`$?\` reflects the last PowerShell pipeline status.
 - Escape special characters with the PowerShell backtick character.`
   }
   return ""
@@ -75,10 +85,10 @@ function chainGuidance(name: string) {
     return "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell (5.1) does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
   }
   if (PS.has(name)) {
-    return "If the commands depend on each other and must run sequentially, use a single bash tool call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like New-Item before Copy-Item, Write before bash for git operations, or git add before git commit), run these operations sequentially instead."
+    return "If the commands depend on each other and must run sequentially, use a single shell tool call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like New-Item before Copy-Item, file writes before git operations, or git add before git commit), run these operations sequentially instead."
   }
   if (CMD.has(name)) {
-    return "If the commands depend on each other and must run sequentially, use a single bash tool call with `&&` to chain them together (e.g., `mkdir out && dir out`). For instance, if one operation must complete before another starts, run these operations sequentially instead."
+    return "If the commands depend on each other and must run sequentially, use a single shell tool call with `&&` to chain them together (e.g., `mkdir out && dir out`). For instance, if one operation must complete before another starts, run these operations sequentially instead."
   }
   return "If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead."
 }
@@ -166,7 +176,7 @@ Usage notes:
     - Write files: Use Write (NOT Set-Content/Out-File or here-strings)
     - Communication: Output text directly (NOT Write-Output/Write-Host)
   - When issuing multiple commands:
-    - If the commands are independent and can run in parallel, make multiple bash tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two bash tool calls in parallel.
+    - If the commands are independent and can run in parallel, make multiple shell tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two shell tool calls in parallel.
     - ${chain}
     - Use \`;\` only when you need to run commands sequentially but don't care if earlier commands fail
     - DO NOT use newlines to separate commands (newlines are ok in quoted strings)
@@ -216,7 +226,7 @@ Usage notes:
     - Write files: Use Write (NOT echo > file)
     - Communication: Output text directly (NOT echo)
   - When issuing multiple commands:
-    - If the commands are independent and can run in parallel, make multiple bash tool calls in a single message. For example, if you need to run "dir" and "where cmd", send a single message with two bash tool calls in parallel.
+    - If the commands are independent and can run in parallel, make multiple shell tool calls in a single message. For example, if you need to run "dir" and "where cmd", send a single message with two shell tool calls in parallel.
     - ${chain}
     - Use \`&\` only when you need to run commands sequentially but don't care if earlier commands fail
     - DO NOT use newlines to separate commands (newlines are ok in quoted strings)

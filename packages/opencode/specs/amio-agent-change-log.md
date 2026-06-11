@@ -89,6 +89,16 @@ bun run script/build.ts --single --amio-agent --skip-install
 - `script/build.ts` now accepts `--target-os=win32,darwin` so sidecar builds can skip Linux cross-runtime downloads when only desktop Windows and macOS packages are needed.
 - `script/build.ts` now accepts `--compile-executable-dir=<dir>` for predownloaded Bun runtimes, using `<dir>/bun-darwin-arm64/bun` and similar target folders to work around interrupted GitHub runtime downloads.
 
+## 2026-06-10
+
+### Shell prompt PowerShell guidance
+
+- Strengthened the shell tool prompt for `powershell` and `pwsh` by documenting Windows PowerShell 5.1 versus PowerShell 7+ syntax differences.
+- The prompt now warns that Windows PowerShell 5.1 does not support `&&`, `||`, ternary, null-coalescing, or null-conditional operators.
+- The prompt now warns about native executable `2>&1` behavior, Windows PowerShell 5.1 default UTF-16 LE file encoding, and missing `ConvertFrom-Json -AsHashtable`.
+- Added guidance for PowerShell interpolation before a colon, such as using `${name}:` or the `-f` format operator instead of `$name:`.
+- Reworded PowerShell and cmd prompt text so those branches no longer describe commands as "bash tool calls" while keeping the exposed compatibility tool ID as `bash`.
+
 ## 2026-06-11
 
 ### Prompt-scoped completion events

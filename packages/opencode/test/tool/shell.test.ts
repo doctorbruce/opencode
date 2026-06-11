@@ -1,5 +1,5 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Exit, Layer } from "effect"
 import type * as Scope from "effect/Scope"
 import os from "os"
@@ -7,6 +7,7 @@ import path from "path"
 import { Config } from "@/config/config"
 import { Shell } from "../../src/shell/shell"
 import { ShellTool } from "../../src/tool/shell"
+import { render } from "../../src/tool/shell/prompt"
 import { Filesystem } from "@/util/filesystem"
 import { provideInstance, testInstanceStoreLayer, tmpdirScoped } from "../fixture/fixture"
 import type { Permission } from "../../src/permission"
@@ -107,6 +108,7 @@ const cmdShell = shells.find((item) => item.label === "cmd")
 
 const sh = () => Shell.name(Shell.acceptable())
 const evalarg = (text: string) => (sh() === "cmd" ? quote(text) : squote(text))
+const promptLimits = { maxLines: 100, maxBytes: 10_000 }
 
 const fill = (mode: "lines" | "bytes", n: number) => {
   const code =
@@ -214,6 +216,36 @@ describe("tool.shell", () => {
       )
     }),
   )
+})
+
+describe("tool.shell prompt", () => {
+  test("renders Windows PowerShell 5.1 guidance without bash tool wording", () => {
+    const prompt = render("powershell", "win32", promptLimits, 30_000).description
+
+    expect(prompt).toContain("Windows PowerShell (5.1)")
+    expect(prompt).toContain("Pipeline chain operators `&&` and `||` are NOT available")
+    expect(prompt).toContain("Ternary (`?:`), null-coalescing (`??`), and null-conditional (`?.`) operators are NOT available")
+    expect(prompt).toContain("Avoid `2>&1` on native executables")
+    expect(prompt).toContain("Default file encoding is UTF-16 LE")
+    expect(prompt).toContain("use `${name}:` or the `-f` format operator")
+    expect(prompt).not.toContain("bash tool call")
+  })
+
+  test("renders PowerShell 7 guidance without bash tool wording", () => {
+    const prompt = render("pwsh", "win32", promptLimits, 30_000).description
+
+    expect(prompt).toContain("PowerShell (7+)")
+    expect(prompt).toContain("Pipeline chain operators `&&` and `||` are available")
+    expect(prompt).toContain("Default file encoding is UTF-8")
+    expect(prompt).not.toContain("bash tool call")
+  })
+
+  test("renders cmd guidance without bash tool wording", () => {
+    const prompt = render("cmd", "win32", promptLimits, 30_000).description
+
+    expect(prompt).toContain("cmd.exe")
+    expect(prompt).not.toContain("bash tool call")
+  })
 })
 
 describe("tool.shell permissions", () => {
