@@ -23,7 +23,10 @@ type OpenApiOperation = {
     readonly schema?: { readonly type?: string }
   }>
   readonly responses?: Record<string, OpenApiResponse>
-  readonly requestBody?: { readonly required?: boolean }
+  readonly requestBody?: {
+    readonly required?: boolean
+    readonly content?: Record<string, { readonly schema?: OpenApiSchema }>
+  }
   readonly security?: unknown
 }
 type OpenApiPathItem = Partial<Record<Method, OpenApiOperation>>
@@ -117,6 +120,15 @@ describe("PublicApi OpenAPI v2 errors", () => {
     ]) {
       expect(spec.paths[path]?.post?.requestBody?.required, path).toBe(true)
     }
+  })
+
+  test("documents session archive clearing payload as nullable", () => {
+    const spec = OpenApi.fromApi(PublicApi) as OpenApiSpec
+    const archived =
+      spec.paths["/session/{sessionID}"]?.patch?.requestBody?.content?.["application/json"]?.schema?.properties?.time
+        ?.properties?.archived
+
+    expect(archived?.anyOf?.some((item) => item.type === "null")).toBe(true)
   })
 
   test("does not rewrite /api endpoint errors to legacy error components", () => {

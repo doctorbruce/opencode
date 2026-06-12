@@ -3575,7 +3575,7 @@ export class Session2 extends HeyApiClient {
       }
       permission?: PermissionRuleset
       time?: {
-        archived?: number
+        archived?: number | null
       }
     },
     options?: Options<never, ThrowOnError>,
@@ -3753,6 +3753,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       messageID?: string
+      requestID?: string
       model?: {
         providerID: string
         modelID: string
@@ -3778,6 +3779,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "messageID" },
+            { in: "body", key: "requestID" },
             { in: "body", key: "model" },
             { in: "body", key: "agent" },
             { in: "body", key: "noReply" },
@@ -4106,6 +4108,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       messageID?: string
+      requestID?: string
       model?: {
         providerID: string
         modelID: string
@@ -4131,6 +4134,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "messageID" },
+            { in: "body", key: "requestID" },
             { in: "body", key: "model" },
             { in: "body", key: "agent" },
             { in: "body", key: "noReply" },

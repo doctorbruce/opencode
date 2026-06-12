@@ -84,6 +84,9 @@ export type Event =
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
+  | EventPromptCompleted
+  | EventPromptFailed
+  | EventPromptCancelled
   | EventVcsBranchUpdated
   | EventWorktreeReady
   | EventWorktreeFailed
@@ -1565,6 +1568,89 @@ export type GlobalEvent = {
         type: "session.compacted"
         properties: {
           sessionID: string
+        }
+      }
+    | {
+        id: string
+        type: "prompt.completed"
+        properties: {
+          sessionID: string
+          promptID: string
+          requestID?: string
+          userMessageID: string
+          assistantMessageID: string
+          stopReason: string
+          finishReason?: string
+          usage?: {
+            cost: number
+            tokens: {
+              total?: number
+              input: number
+              output: number
+              reasoning: number
+              cache: {
+                read: number
+                write: number
+              }
+            }
+          }
+        }
+      }
+    | {
+        id: string
+        type: "prompt.failed"
+        properties: {
+          sessionID: string
+          promptID: string
+          requestID?: string
+          userMessageID: string
+          assistantMessageID?: string
+          stopReason: string
+          finishReason?: string
+          usage?: {
+            cost: number
+            tokens: {
+              total?: number
+              input: number
+              output: number
+              reasoning: number
+              cache: {
+                read: number
+                write: number
+              }
+            }
+          }
+          error: {
+            name?: string
+            message: string
+            stack?: string
+          }
+        }
+      }
+    | {
+        id: string
+        type: "prompt.cancelled"
+        properties: {
+          sessionID: string
+          promptID: string
+          requestID?: string
+          userMessageID: string
+          assistantMessageID?: string
+          stopReason: string
+          finishReason?: string
+          usage?: {
+            cost: number
+            tokens: {
+              total?: number
+              input: number
+              output: number
+              reasoning: number
+              cache: {
+                read: number
+                write: number
+              }
+            }
+          }
         }
       }
     | {
@@ -5176,6 +5262,92 @@ export type EventSessionCompacted = {
   }
 }
 
+export type EventPromptCompleted = {
+  id: string
+  type: "prompt.completed"
+  properties: {
+    sessionID: string
+    promptID: string
+    requestID?: string
+    userMessageID: string
+    assistantMessageID: string
+    stopReason: string
+    finishReason?: string
+    usage?: {
+      cost: number
+      tokens: {
+        total?: number
+        input: number
+        output: number
+        reasoning: number
+        cache: {
+          read: number
+          write: number
+        }
+      }
+    }
+  }
+}
+
+export type EventPromptFailed = {
+  id: string
+  type: "prompt.failed"
+  properties: {
+    sessionID: string
+    promptID: string
+    requestID?: string
+    userMessageID: string
+    assistantMessageID?: string
+    stopReason: string
+    finishReason?: string
+    usage?: {
+      cost: number
+      tokens: {
+        total?: number
+        input: number
+        output: number
+        reasoning: number
+        cache: {
+          read: number
+          write: number
+        }
+      }
+    }
+    error: {
+      name?: string
+      message: string
+      stack?: string
+    }
+  }
+}
+
+export type EventPromptCancelled = {
+  id: string
+  type: "prompt.cancelled"
+  properties: {
+    sessionID: string
+    promptID: string
+    requestID?: string
+    userMessageID: string
+    assistantMessageID?: string
+    stopReason: string
+    finishReason?: string
+    usage?: {
+      cost: number
+      tokens: {
+        total?: number
+        input: number
+        output: number
+        reasoning: number
+        cache: {
+          read: number
+          write: number
+        }
+      }
+    }
+  }
+}
+
 export type EventVcsBranchUpdated = {
   id: string
   type: "vcs.branch.updated"
@@ -7850,7 +8022,7 @@ export type SessionUpdateData = {
     }
     permission?: PermissionRuleset
     time?: {
-      archived?: number
+      archived?: number | null
     }
   }
   path: {
@@ -8026,6 +8198,7 @@ export type SessionMessagesResponse2 = SessionMessagesResponses[keyof SessionMes
 export type SessionPromptData = {
   body?: {
     messageID?: string
+    requestID?: string
     model?: {
       providerID: string
       modelID: string
@@ -8373,6 +8546,7 @@ export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSu
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string
+    requestID?: string
     model?: {
       providerID: string
       modelID: string

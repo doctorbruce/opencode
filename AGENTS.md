@@ -1,6 +1,7 @@
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
+- Any project modification must be recorded in `packages/opencode/specs/amio-agent-change-log.md` in the same change set so fork-specific changes remain auditable.
 
 ## Commits and PR Titles
 

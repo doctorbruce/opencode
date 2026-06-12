@@ -108,3 +108,26 @@ bun run script/build.ts --single --amio-agent --skip-install
 - `prompt.failed` includes `sessionID`, `promptID`, `userMessageID`, optional `assistantMessageID`, and a normalized error payload.
 - These events let the Astron sidecar finish a specific `session/prompt` request from prompt-scoped runtime events instead of inferring completion from deprecated `session.idle`.
 - `session.idle` should now be treated as session status only by the Astron adapter; prompt result/error handling should use the new prompt events.
+
+## 2026-06-12
+
+### Prompt lifecycle finalization
+
+- Added `requestID` to `SessionPrompt.PromptInput` so Astron can pass its JSON-RPC request id through the opencode prompt boundary.
+- Extended `prompt.completed` with optional `requestID`, `finishReason`, and `usage` fields.
+- Extended `prompt.failed` with optional `requestID`, `finishReason`, `usage`, plus `stopReason:"error"`.
+- Added `prompt.cancelled` for cancelled prompt turns, so `MessageAbortedError` is no longer projected as a normal prompt failure.
+- `usage` is emitted from the assistant message `cost` and `tokens` captured by opencode, keeping prompt-scoped accounting on the runtime side.
+- Added regression coverage for completed, failed, and cancelled prompt-scoped events.
+
+### Change log requirement
+
+- Added a root `AGENTS.md` rule requiring every project modification to be recorded in `packages/opencode/specs/amio-agent-change-log.md` in the same change set.
+
+### Session archive restore via HTTP API
+
+- `PATCH /session/:sessionID` now accepts `{"time":{"archived":null}}` to clear `time.archived` and restore an archived session.
+- `{"time":{}}` remains a no-op so omitted fields keep their existing update semantics.
+- The session projector now writes `NULL` for unarchived session snapshots so clearing `time.archived` persists instead of leaving the old SQL value in place.
+- The public OpenAPI schema and generated JavaScript SDK now expose `session.update` archive timestamps as `number | null`.
+- Added HTTP API and OpenAPI regression coverage for archive clearing.

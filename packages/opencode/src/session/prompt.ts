@@ -1206,28 +1206,38 @@ export const layer = Layer.effect(
       if (input.noReply === true) return message
       const result = yield* loop({ sessionID: input.sessionID }).pipe(Effect.exit)
       if (Exit.isFailure(result)) {
-        yield* events.publish(Event.Failed, {
-          sessionID: input.sessionID,
-          promptID: message.info.id,
-          userMessageID: message.info.id,
-          error: promptError(result.cause),
-        })
+        const error = promptError(result.cause)
+        if (isPromptCancelledError(error)) {
+          yield* events.publish(Event.Cancelled, {
+            ...promptEvent(input, message),
+            stopReason: "cancelled",
+          })
+        } else {
+          yield* events.publish(Event.Failed, {
+            ...promptEvent(input, message),
+            stopReason: "error",
+            error,
+          })
+        }
         return yield* Effect.failCause(result.cause)
       }
       if (result.value.info.role === "assistant" && result.value.info.error) {
+        if (isPromptCancelledError(result.value.info.error)) {
+          yield* events.publish(Event.Cancelled, {
+            ...promptEvent(input, message, result.value.info),
+            stopReason: "cancelled",
+          })
+          return result.value
+        }
         yield* events.publish(Event.Failed, {
-          sessionID: input.sessionID,
-          promptID: message.info.id,
-          userMessageID: message.info.id,
-          assistantMessageID: result.value.info.id,
+          ...promptEvent(input, message, result.value.info),
+          stopReason: "error",
           error: promptStoredError(result.value.info.error),
         })
         return result.value
       }
       yield* events.publish(Event.Completed, {
-        sessionID: input.sessionID,
-        promptID: message.info.id,
-        userMessageID: message.info.id,
+        ...promptEvent(input, message, result.value.info),
         assistantMessageID: result.value.info.id,
         stopReason: "end_turn",
       })
@@ -1684,6 +1694,7 @@ const ModelRef = Schema.Struct({
 export const PromptInput = Schema.Struct({
   sessionID: SessionID,
   messageID: Schema.optional(MessageID),
+  requestID: Schema.optional(Schema.String),
   model: Schema.optional(ModelRef),
   agent: Schema.optional(Schema.String),
   noReply: Schema.optional(Schema.Boolean),
@@ -1711,15 +1722,32 @@ const PromptError = Schema.Struct({
   stack: Schema.optional(Schema.String),
 })
 
+const PromptUsage = Schema.Struct({
+  cost: Schema.Finite,
+  tokens: Schema.Struct({
+    total: Schema.optional(Schema.Finite),
+    input: Schema.Finite,
+    output: Schema.Finite,
+    reasoning: Schema.Finite,
+    cache: Schema.Struct({
+      read: Schema.Finite,
+      write: Schema.Finite,
+    }),
+  }),
+})
+
 export const Event = {
   Completed: EventV2.define({
     type: "prompt.completed",
     schema: {
       sessionID: SessionID,
       promptID: MessageID,
+      requestID: Schema.optional(Schema.String),
       userMessageID: MessageID,
       assistantMessageID: MessageID,
       stopReason: Schema.String,
+      finishReason: Schema.optional(Schema.String),
+      usage: Schema.optional(PromptUsage),
     },
   }),
   Failed: EventV2.define({
@@ -1727,9 +1755,26 @@ export const Event = {
     schema: {
       sessionID: SessionID,
       promptID: MessageID,
+      requestID: Schema.optional(Schema.String),
       userMessageID: MessageID,
       assistantMessageID: Schema.optional(MessageID),
+      stopReason: Schema.String,
+      finishReason: Schema.optional(Schema.String),
+      usage: Schema.optional(PromptUsage),
       error: PromptError,
+    },
+  }),
+  Cancelled: EventV2.define({
+    type: "prompt.cancelled",
+    schema: {
+      sessionID: SessionID,
+      promptID: MessageID,
+      requestID: Schema.optional(Schema.String),
+      userMessageID: MessageID,
+      assistantMessageID: Schema.optional(MessageID),
+      stopReason: Schema.String,
+      finishReason: Schema.optional(Schema.String),
+      usage: Schema.optional(PromptUsage),
     },
   }),
 }
@@ -1802,6 +1847,41 @@ export function createStructuredOutputTool(input: {
       }
     },
   })
+}
+
+function promptEvent(input: PromptInput, user: SessionV1.WithParts, result?: SessionV1.Info) {
+  const assistant = result?.role === "assistant" ? result : undefined
+  return {
+    sessionID: input.sessionID,
+    promptID: user.info.id,
+    ...(input.requestID?.trim() ? { requestID: input.requestID.trim() } : {}),
+    userMessageID: user.info.id,
+    ...(result ? { assistantMessageID: result.id } : {}),
+    ...(assistant?.finish ? { finishReason: assistant.finish } : {}),
+    ...(assistant ? { usage: promptUsage(assistant) } : {}),
+  }
+}
+
+function promptUsage(input: SessionV1.Assistant) {
+  return {
+    cost: input.cost,
+    tokens: {
+      ...(typeof input.tokens.total === "number" ? { total: input.tokens.total } : {}),
+      input: input.tokens.input,
+      output: input.tokens.output,
+      reasoning: input.tokens.reasoning,
+      cache: {
+        read: input.tokens.cache.read,
+        write: input.tokens.cache.write,
+      },
+    },
+  }
+}
+
+function isPromptCancelledError(value: unknown) {
+  if (value instanceof Error) return value.name === "MessageAbortedError"
+  if (!value || typeof value !== "object") return false
+  return (value as Record<string, unknown>).name === "MessageAbortedError"
 }
 
 function promptError(cause: Cause.Cause<unknown>) {

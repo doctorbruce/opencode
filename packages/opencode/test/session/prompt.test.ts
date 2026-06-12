@@ -533,10 +533,11 @@ it.instance("prompt emits a prompt-scoped completed event", () =>
     })
     yield* Effect.addFinalizer(() => unsubscribe)
 
-    yield* llm.text("world")
+    yield* llm.text("world", { usage: { input: 7, output: 3 } })
     const result = yield* prompt.prompt({
       sessionID: chat.id,
       agent: "build",
+      requestID: "req-prompt-completed",
       parts: [{ type: "text", text: "hello" }],
     })
     const event = yield* awaitWithTimeout(
@@ -548,8 +549,14 @@ it.instance("prompt emits a prompt-scoped completed event", () =>
     expect(event.sessionID).toBe(chat.id)
     expect(typeof event.promptID).toBe("string")
     expect(event.promptID).toBe(event.userMessageID)
+    expect(event.requestID).toBe("req-prompt-completed")
     expect(event.assistantMessageID).toBe(result.info.id)
     expect(event.stopReason).toBe("end_turn")
+    expect(event.finishReason).toBe("stop")
+    expect(event.usage).toEqual({
+      cost: result.info.role === "assistant" ? result.info.cost : 0,
+      tokens: result.info.role === "assistant" ? result.info.tokens : undefined,
+    })
   }),
 )
 
@@ -581,6 +588,7 @@ it.instance(
       const result = yield* prompt.prompt({
         sessionID: chat.id,
         agent: "build",
+        requestID: "req-prompt-failed",
         parts: [{ type: "text", text: "hello" }],
       })
       const event = yield* awaitWithTimeout(
@@ -594,12 +602,78 @@ it.instance(
       expect(event.sessionID).toBe(chat.id)
       expect(typeof event.promptID).toBe("string")
       expect(event.promptID).toBe(event.userMessageID)
+      expect(event.requestID).toBe("req-prompt-failed")
       expect(event.assistantMessageID).toBe(result.info.id)
+      expect(event.stopReason).toBe("error")
+      expect(event.finishReason).toBe("error")
+      expect(event.usage).toEqual({
+        cost: result.info.role === "assistant" ? result.info.cost : 0,
+        tokens: result.info.role === "assistant" ? result.info.tokens : undefined,
+      })
       expect(event.error).toMatchObject({
         name: "ContextOverflowError",
         message: expect.stringContaining("request entity too large"),
       })
     }),
+)
+
+it.instance(
+  "prompt emits a prompt-scoped cancelled event when cancelled mid-stream",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const events = yield* EventV2Bridge.Service
+      const received = yield* Deferred.make<{ type: string; data: Record<string, unknown> }>()
+      const chat = yield* sessions.create({
+        title: "Prompt cancelled event",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      const unsubscribe = yield* events.listen((event) => {
+        if (event.type.startsWith("prompt."))
+          Deferred.doneUnsafe(
+            received,
+            Effect.succeed({
+              type: event.type,
+              data: event.data as Record<string, unknown>,
+            }),
+          )
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsubscribe)
+
+      yield* llm.hang
+      const fiber = yield* prompt
+        .prompt({
+          sessionID: chat.id,
+          agent: "build",
+          requestID: "req-prompt-cancelled",
+          parts: [{ type: "text", text: "cancel me" }],
+        })
+        .pipe(Effect.forkChild)
+
+      yield* llm.wait(1)
+      yield* prompt.cancel(chat.id)
+      const exit = yield* Fiber.await(fiber)
+      expect(Exit.isSuccess(exit)).toBe(true)
+
+      const event = yield* awaitWithTimeout(
+        Deferred.await(received),
+        "timed out waiting for prompt lifecycle event",
+        "2 seconds",
+      )
+
+      expect(event.type).toBe("prompt.cancelled")
+      expect(event.data.sessionID).toBe(chat.id)
+      expect(typeof event.data.promptID).toBe("string")
+      expect(event.data.promptID).toBe(event.data.userMessageID)
+      expect(event.data.requestID).toBe("req-prompt-cancelled")
+      expect(event.data.stopReason).toBe("cancelled")
+      if (Exit.isSuccess(exit)) expect(event.data.assistantMessageID).toBe(exit.value.info.id)
+    }),
+  5_000,
 )
 
 it.instance("loop stops provider overflow instead of auto-compacting when disabled", () =>
