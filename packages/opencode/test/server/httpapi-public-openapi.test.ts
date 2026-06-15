@@ -97,17 +97,13 @@ describe("PublicApi OpenAPI v2 errors", () => {
     }
   })
 
-  test("documents optional project reference aliases for filesystem reads and lists", () => {
+  test("documents references separately from filesystem routes", () => {
     const spec = OpenApi.fromApi(PublicApi) as OpenApiSpec
 
-    for (const path of ["/api/fs/read", "/api/fs/list"]) {
-      expect(spec.paths[path]?.get?.parameters, path).toContainEqual({
-        in: "query",
-        name: "reference",
-        required: false,
-        schema: { type: "string" },
-      })
+    for (const path of ["/api/fs/read/*", "/api/fs/list"]) {
+      expect(spec.paths[path]?.get?.parameters, path).not.toContainEqual(expect.objectContaining({ name: "reference" }))
     }
+    expect(spec.paths["/api/reference"]?.get).toBeDefined()
   })
 
   test("preserves required request bodies for v2 mutations", () => {
@@ -128,7 +124,33 @@ describe("PublicApi OpenAPI v2 errors", () => {
       spec.paths["/session/{sessionID}"]?.patch?.requestBody?.content?.["application/json"]?.schema?.properties?.time
         ?.properties?.archived
 
-    expect(archived?.anyOf?.some((item) => item.type === "null")).toBe(true)
+    expect(archived?.anyOf?.some((item: OpenApiSchema) => item.type === "null")).toBe(true)
+  })
+
+  test("documents integration discovery and connection routes", () => {
+    const spec = OpenApi.fromApi(PublicApi) as OpenApiSpec
+
+    for (const [method, path] of [
+      ["get", "/api/integration"],
+      ["get", "/api/integration/{integrationID}"],
+      ["post", "/api/integration/{integrationID}/connect/key"],
+      ["post", "/api/integration/{integrationID}/connect/oauth"],
+      ["get", "/api/integration/attempt/{attemptID}"],
+      ["post", "/api/integration/attempt/{attemptID}/complete"],
+      ["delete", "/api/integration/attempt/{attemptID}"],
+      ["delete", "/api/credential/{credentialID}"],
+      ["patch", "/api/credential/{credentialID}"],
+    ] as const) {
+      expect(spec.paths[path]?.[method], `${method.toUpperCase()} ${path}`).toBeDefined()
+    }
+
+    for (const path of [
+      "/api/integration/{integrationID}/connect/key",
+      "/api/integration/{integrationID}/connect/oauth",
+      "/api/integration/attempt/{attemptID}/complete",
+    ]) {
+      expect(spec.paths[path]?.post?.requestBody?.required, path).toBe(true)
+    }
   })
 
   test("does not rewrite /api endpoint errors to legacy error components", () => {

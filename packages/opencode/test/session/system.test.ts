@@ -6,6 +6,7 @@ import { Skill } from "../../src/skill"
 import { Permission } from "../../src/permission"
 import { SystemPrompt } from "../../src/session/system"
 import type { Provider } from "../../src/provider/provider"
+import { LocationServiceMap } from "@opencode-ai/core/location-layer"
 import { testEffect } from "../lib/effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -95,6 +96,7 @@ function model(id: string): Provider.Model {
 
 const it = testEffect(
   SystemPrompt.layer.pipe(
+    Layer.provide(LocationServiceMap.layer),
     Layer.provide(
       Layer.succeed(
         Skill.Service,

@@ -1,8 +1,9 @@
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { llmClient } from "@opencode-ai/core/effect/layer-node-platform"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Provider } from "@/provider/provider"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { Log } from "@opencode-ai/core/util/log"
 import { Context, Effect, Layer } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool } from "ai"
@@ -29,15 +30,14 @@ import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
 import { LLMRequestPrep } from "./llm/request"
 
-const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
 const promptValueSize = (value: unknown): number => {
   if (typeof value === "string") return value.length
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value).length
-  if (Array.isArray(value)) return value.reduce<number>((sum, item) => sum + promptValueSize(item), 0)
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + promptValueSize(item), 0)
   if (!value || typeof value !== "object") return 0
-  return Object.values(value as Record<string, unknown>).reduce<number>((sum, item) => sum + promptValueSize(item), 0)
+  return Object.values(value).reduce((sum, item) => sum + promptValueSize(item), 0)
 }
 
 const promptSummary = (messages: ModelMessage[], system: string[]) => {
@@ -46,21 +46,14 @@ const promptSummary = (messages: ModelMessage[], system: string[]) => {
     role: String(message.role),
     chars: promptValueSize(message.content),
   }))
-  const largest = messageSizes.reduce(
-    (max, item) => (item.chars > max.chars ? item : max),
-    { index: -1, role: "none", chars: 0 },
-  )
-  const partTypes = messages
-    .flatMap((message): unknown[] => (Array.isArray(message.content) ? [...message.content] : []))
-    .map((part) =>
-      typeof part === "object" && part !== null && "type" in part
-        ? String((part as { readonly type?: unknown }).type)
-        : "unknown",
-    )
-
+  const largest = messageSizes.reduce((max, item) => (item.chars > max.chars ? item : max), {
+    index: -1,
+    role: "none",
+    chars: 0,
+  })
   return {
     messageCount: messages.length,
-    contentPartCount: messages.reduce<number>(
+    contentPartCount: messages.reduce(
       (sum, message) => sum + (Array.isArray(message.content) ? message.content.length : 1),
       0,
     ),
@@ -70,10 +63,6 @@ const promptSummary = (messages: ModelMessage[], system: string[]) => {
     largestMessage: largest,
     roleCounts: messages.reduce<Record<string, number>>((acc, message) => {
       acc[String(message.role)] = (acc[String(message.role)] ?? 0) + 1
-      return acc
-    }, {}),
-    partTypeCounts: partTypes.reduce<Record<string, number>>((acc, type) => {
-      acc[type] = (acc[type] ?? 0) + 1
       return acc
     }, {}),
   }
@@ -86,16 +75,6 @@ const streamEventType = (value: unknown) =>
 
 const isContentDelta = (event: LLMEvent) =>
   event.type === "text-delta" || event.type === "reasoning-delta" || event.type === "tool-input-delta"
-
-const streamLogger = (input: Pick<StreamInput, "model" | "sessionID" | "small" | "agent">) =>
-  log
-    .clone()
-    .tag("providerID", input.model.providerID)
-    .tag("modelID", input.model.id)
-    .tag("session.id", input.sessionID)
-    .tag("small", (input.small ?? false).toString())
-    .tag("agent", input.agent.name)
-    .tag("mode", input.agent.mode)
 
 export type StreamInput = {
   user: SessionV1.User
@@ -149,10 +128,13 @@ const live: Layer.Layer<
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
       const startedAt = Date.now()
-      const l = streamLogger(input)
-      l.info("stream", {
-        modelID: input.model.id,
+      yield* Effect.logInfo("stream", {
         providerID: input.model.providerID,
+        modelID: input.model.id,
+        "session.id": input.sessionID,
+        small: (input.small ?? false).toString(),
+        agent: input.agent.name,
+        mode: input.agent.mode,
       })
 
       const [language, cfg, item, info] = yield* Effect.all(
@@ -175,9 +157,11 @@ const live: Layer.Layer<
         isWorkflow,
         promptLanguage: cfg.prompt_language ?? "en",
       })
-      const preparedAt = Date.now()
-      l.info("prompt prepared", {
-        elapsedMs: preparedAt - startedAt,
+      yield* Effect.logInfo("prompt prepared", {
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+        "session.id": input.sessionID,
+        elapsedMs: Date.now() - startedAt,
         currentUserChars: promptValueSize((input.user as { readonly parts?: unknown }).parts),
         raw: promptSummary(input.messages, input.system),
         prepared: promptSummary(prepared.messages, prepared.system),
@@ -190,6 +174,7 @@ const live: Layer.Layer<
       // Wire up toolExecutor for DWS workflow models so that tool calls
       // from the workflow service are executed via opencode's tool system
       // and results sent back over the WebSocket.
+      const bridge = yield* EffectBridge.make()
       if (language instanceof GitLabWorkflowLanguageModel) {
         const workflowModel = language as GitLabWorkflowLanguageModel & {
           sessionID?: string
@@ -226,7 +211,6 @@ const live: Layer.Layer<
           return !match || match.action !== "ask"
         })
 
-        const bridge = yield* EffectBridge.make()
         const approvedToolsForSession = new Set<string>()
         workflowModel.approvalHandler = bridge.bind(async (approvalTools) => {
           const uniqueNames = [...new Set(approvalTools.map((t: { name: string }) => t.name))] as string[]
@@ -316,59 +300,69 @@ const live: Layer.Layer<
           abort: input.abort,
         })
         if (native.type === "supported") {
-          yield* Effect.logInfo("llm runtime selected").pipe(
-            Effect.annotateLogs({
-              "llm.runtime": "native",
-              "llm.provider": input.model.providerID,
-              "llm.model": input.model.id,
-            }),
-          )
+          yield* Effect.logInfo("llm runtime selected", {
+            "llm.runtime": "native",
+            "llm.provider": input.model.providerID,
+            "llm.model": input.model.id,
+          })
           return {
             type: "native" as const,
             stream: native.stream,
             startedAt,
           }
         }
-        yield* Effect.logInfo("llm runtime selected").pipe(
-          Effect.annotateLogs({
-            "llm.runtime": "ai-sdk",
-            "llm.provider": input.model.providerID,
-            "llm.model": input.model.id,
-            "llm.native_unsupported_reason": native.reason,
-          }),
-        )
-        l.info("native runtime unavailable; falling back to ai-sdk", { reason: native.reason })
-      }
-
-      yield* Effect.logInfo("llm runtime selected").pipe(
-        Effect.annotateLogs({
+        yield* Effect.logInfo("llm runtime selected", {
           "llm.runtime": "ai-sdk",
           "llm.provider": input.model.providerID,
           "llm.model": input.model.id,
-        }),
-      )
+          "llm.native_unsupported_reason": native.reason,
+        })
+        yield* Effect.logInfo("native runtime unavailable; falling back to ai-sdk", {
+          providerID: input.model.providerID,
+          modelID: input.model.id,
+          "session.id": input.sessionID,
+          small: (input.small ?? false).toString(),
+          agent: input.agent.name,
+          mode: input.agent.mode,
+          reason: native.reason,
+        })
+      }
+
+      yield* Effect.logInfo("llm runtime selected", {
+        "llm.runtime": "ai-sdk",
+        "llm.provider": input.model.providerID,
+        "llm.model": input.model.id,
+      })
       // Default runtime path: AI SDK owns provider execution and tool dispatch;
       // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
       const streamTextStartedAt = Date.now()
-      l.info("ai-sdk streamText starting", {
+      yield* Effect.logInfo("ai-sdk streamText starting", {
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+        "session.id": input.sessionID,
         elapsedMs: streamTextStartedAt - startedAt,
       })
       const providerPromptObserved = { transformed: false }
       const result = streamText({
+        onError(error) {
+          bridge.fork(
+            Effect.logError("stream error", {
+              providerID: input.model.providerID,
+              modelID: input.model.id,
+              "session.id": input.sessionID,
+              small: (input.small ?? false).toString(),
+              agent: input.agent.name,
+              mode: input.agent.mode,
+              elapsedMs: Date.now() - startedAt,
+              error,
+            }),
+          )
+        },
         // Copilot returns the authoritative billed amount only in provider-specific response fields.
         includeRawChunks: input.model.providerID.includes("github-copilot"),
-        onError(error) {
-          l.error("stream error", {
-            error,
-          })
-        },
         async experimental_repairToolCall(failed) {
           const lower = failed.toolCall.toolName.toLowerCase()
           if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
-            l.info("repairing tool call", {
-              tool: failed.toolCall.toolName,
-              repaired: lower,
-            })
             return {
               ...failed.toolCall,
               toolName: lower,
@@ -411,11 +405,16 @@ const live: Layer.Layer<
                   args.params.prompt = transformed
                   if (!providerPromptObserved.transformed) {
                     providerPromptObserved.transformed = true
-                    l.info("provider prompt transformed", {
-                      elapsedMs: Date.now() - startedAt,
-                      promptChars: promptValueSize(transformed),
-                      promptItemCount: Array.isArray(transformed) ? transformed.length : undefined,
-                    })
+                    bridge.fork(
+                      Effect.logInfo("provider prompt transformed", {
+                        providerID: input.model.providerID,
+                        modelID: input.model.id,
+                        "session.id": input.sessionID,
+                        elapsedMs: Date.now() - startedAt,
+                        promptChars: promptValueSize(transformed),
+                        promptItemCount: Array.isArray(transformed) ? transformed.length : undefined,
+                      }),
+                    )
                   }
                 }
                 return args.params
@@ -433,7 +432,10 @@ const live: Layer.Layer<
           },
         },
       })
-      l.info("ai-sdk streamText created", {
+      yield* Effect.logInfo("ai-sdk streamText created", {
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+        "session.id": input.sessionID,
         elapsedMs: Date.now() - streamTextStartedAt,
         totalElapsedMs: Date.now() - startedAt,
       })
@@ -451,13 +453,15 @@ const live: Layer.Layer<
       stream: Stream.Stream<LLMEvent, unknown>,
     ) => {
       const observed = { firstEvent: false, firstDelta: false }
-      const l = streamLogger(input)
       return stream.pipe(
         Stream.tap((event) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             if (!observed.firstEvent) {
               observed.firstEvent = true
-              l.info("llm first event", {
+              yield* Effect.logInfo("llm first event", {
+                providerID: input.model.providerID,
+                modelID: input.model.id,
+                "session.id": input.sessionID,
                 runtime,
                 eventType: event.type,
                 elapsedMs: Date.now() - startedAt,
@@ -465,7 +469,10 @@ const live: Layer.Layer<
             }
             if (!observed.firstDelta && isContentDelta(event)) {
               observed.firstDelta = true
-              l.info("llm first content delta", {
+              yield* Effect.logInfo("llm first content delta", {
+                providerID: input.model.providerID,
+                modelID: input.model.id,
+                "session.id": input.sessionID,
                 runtime,
                 eventType: event.type,
                 elapsedMs: Date.now() - startedAt,
@@ -492,16 +499,18 @@ const live: Layer.Layer<
             // Adapter seam: both runtimes expose the same LLMEvent stream. Native
             // already returns one; AI SDK streams are converted here.
             const rawObserved = { firstEvent: false }
-            const l = streamLogger(input)
             const state = LLMAISDK.adapterState()
-            return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
+            const stream = Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(
               Stream.tap((event) =>
-                Effect.sync(() => {
+                Effect.gen(function* () {
                   if (rawObserved.firstEvent) return
                   rawObserved.firstEvent = true
-                  l.info("ai-sdk first raw event", {
+                  yield* Effect.logInfo("ai-sdk first raw event", {
+                    providerID: input.model.providerID,
+                    modelID: input.model.id,
+                    "session.id": input.sessionID,
                     eventType: streamEventType(event),
                     elapsedMs: Date.now() - result.startedAt,
                   })
@@ -509,8 +518,8 @@ const live: Layer.Layer<
               ),
               Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
-              (stream) => observeLLMStream(input, "ai-sdk", result.startedAt, stream),
             )
+            return observeLLMStream(input, "ai-sdk", result.startedAt, stream)
           }),
         ),
       )
@@ -535,5 +544,16 @@ export const defaultLayer = Layer.suspend(() =>
 )
 
 export const hasToolCalls = LLMRequestPrep.hasToolCalls
+
+export const node = LayerNode.make(layer, [
+  Auth.node,
+  Config.node,
+  Provider.node,
+  Plugin.node,
+  Permission.node,
+  EventV2Bridge.node,
+  llmClient,
+  RuntimeFlags.node,
+])
 
 export * as LLM from "./llm"

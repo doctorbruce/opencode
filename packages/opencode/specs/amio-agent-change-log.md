@@ -158,3 +158,13 @@ bun run script/build.ts --single --amio-agent --skip-install
 - The opencode ACP permission projection now prefers `display.toolCallId`, `display.title`, `display.rawInput`, and `display.locations` when present.
 - Regenerated the JavaScript SDK v2 types so `permission.asked` consumers can see the new field.
 - This gives Astron a prompt/runtime-produced permission UI contract and reduces adapter-side parsing of mail, credential, and edit preview metadata.
+
+### Upstream dev merge preservation
+
+- Merged the latest upstream `dev` branch while preserving Astron sidecar fork behavior.
+- Kept `disableWebUiRoutes` support on the new upstream HTTP route graph so `amio-agent` can continue serving API-only sidecar routes.
+- Adapted the `amio-agent` entrypoint to upstream's new observability environment variables after the old `core/util/log` helper was removed.
+- Reapplied prompt first-token diagnostics on top of upstream's Effect logging path.
+- Preserved `prompt_language` routing for provider prompts, environment context, skills, reminders, structured output, and max-step prompts while adopting upstream core reference guidance.
+- Removed the new upstream ripgrep auto-download fallback; the runtime now uses `rg` from PATH or the local opencode bin directory and fails clearly if it is missing.
+- Regenerated the JavaScript SDK v2 output after the merge so prompt lifecycle events, permission display metadata, session archive nullability, and upstream API additions stay in sync.

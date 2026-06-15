@@ -1,8 +1,6 @@
 import yargs from "yargs"
 import { hideBin } from "yargs/helpers"
-import * as Log from "@opencode-ai/core/util/log"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { NamedError } from "@opencode-ai/core/util/error"
 import { EOL } from "os"
 import { AmioAgentCommands, installAmioAgentEnvironment } from "./cli/amio-agent"
 import { UI } from "./cli/ui"
@@ -10,24 +8,8 @@ import { Installation } from "./installation"
 import { FormatError } from "./cli/error"
 import { errorMessage } from "./util/error"
 import { Heap } from "./cli/heap"
-import { ensureProcessMetadata } from "@opencode-ai/core/util/opencode-process"
-import { isRecord } from "@/util/record"
 
 installAmioAgentEnvironment()
-
-const processMetadata = ensureProcessMetadata("main")
-
-process.on("unhandledRejection", (e) => {
-  Log.Default.error("rejection", {
-    e: errorMessage(e),
-  })
-})
-
-process.on("uncaughtException", (e) => {
-  Log.Default.error("exception", {
-    e: errorMessage(e),
-  })
-})
 
 const args = hideBin(process.argv)
 
@@ -63,32 +45,19 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    if (opts.printLogs) process.env.OPENCODE_PRINT_LOGS = "1"
+    if (opts.logLevel) process.env.OPENCODE_LOG_LEVEL = opts.logLevel
     if (opts.pure) {
       process.env.OPENCODE_PURE = "1"
     }
 
-    await Log.init({
-      print: process.argv.includes("--print-logs"),
-      dev: Installation.isLocal(),
-      level: (() => {
-        if (opts.logLevel) return opts.logLevel as Log.Level
-        if (Installation.isLocal()) return "DEBUG"
-        return "INFO"
-      })(),
-    })
+    if (Installation.isLocal() && !process.env.OPENCODE_LOG_LEVEL) process.env.OPENCODE_LOG_LEVEL = "DEBUG"
 
     Heap.start()
 
     process.env.AGENT = "1"
     process.env.OPENCODE = "1"
     process.env.OPENCODE_PID = String(process.pid)
-
-    Log.Default.info("amio-agent", {
-      version: InstallationVersion,
-      args: process.argv.slice(2),
-      process_role: processMetadata.processRole,
-      run_id: processMetadata.runID,
-    })
   })
   .usage("")
 
@@ -122,42 +91,10 @@ try {
     await cli.parse()
   }
 } catch (e) {
-  const data: Record<string, unknown> = {}
-  if (e instanceof Error) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      cause: e.cause?.toString(),
-      stack: e.stack,
-    })
-  }
-
-  if (e instanceof NamedError) {
-    const obj = e.toObject()
-    if (isRecord(obj.data)) {
-      for (const [key, value] of Object.entries(obj.data)) {
-        if (key === "name" || key === "stack" || key === "cause") continue
-        data[key] = value
-      }
-    }
-  }
-
-  if (e instanceof ResolveMessage) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      code: e.code,
-      specifier: e.specifier,
-      referrer: e.referrer,
-      position: e.position,
-      importKind: e.importKind,
-    })
-  }
-  Log.Default.error("fatal", data)
   const formatted = FormatError(e)
   if (formatted) UI.error(formatted)
   if (formatted === undefined) {
-    UI.error("Unexpected error, check log file at " + Log.file() + " for more details" + EOL)
+    UI.error("Unexpected error" + EOL)
     process.stderr.write(errorMessage(e) + EOL)
   }
   process.exitCode = 1

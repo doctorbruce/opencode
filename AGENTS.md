@@ -3,6 +3,12 @@
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 - Any project modification must be recorded in `packages/opencode/specs/amio-agent-change-log.md` in the same change set so fork-specific changes remain auditable.
 
+## Branch Names
+
+Use a short branch name of at most three words, separated by hyphens. Do not use slashes or type prefixes such as `feat/` or `fix/`.
+
+Examples: `session-recovery`, `fix-scroll-state`, `regenerate-sdk`.
+
 ## Commits and PR Titles
 
 Use conventional commit-style messages and PR titles: `type(scope): summary`.

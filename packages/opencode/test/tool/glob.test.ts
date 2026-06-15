@@ -5,38 +5,31 @@ import { Cause, Effect, Exit, Layer } from "effect"
 import { GlobTool } from "../../src/tool/glob"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
-import { Search } from "@opencode-ai/core/filesystem/search"
+import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
 import { Truncate } from "@/tool/truncate"
 import { Agent } from "../../src/agent/agent"
-import { TestInstance } from "../fixture/fixture"
+import { TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
-import { Reference } from "@/reference/reference"
 import { Config } from "@/config/config"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { Git } from "@/git"
 import { Filesystem } from "@/util/filesystem"
 import { Permission } from "../../src/permission"
 import type * as Tool from "../../src/tool/tool"
-
-const referenceLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
-  Reference.layer.pipe(
-    Layer.provide(Config.defaultLayer),
-    Layer.provide(RuntimeFlags.layer(flags)),
-  )
 
 const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
   Layer.mergeAll(
     CrossSpawnSpawner.defaultLayer,
     FSUtil.defaultLayer,
-    Search.defaultLayer,
+    Ripgrep.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
-    referenceLayer(flags),
+    Git.defaultLayer,
   )
 
 const it = testEffect(toolLayer())
-const references = testEffect(toolLayer({ experimentalReferences: true }))
 const full = (p: string) => (process.platform === "win32" ? Filesystem.normalizePath(p) : p)
 
 const ctx = {
@@ -63,6 +56,38 @@ const asks = () => {
     } satisfies Tool.Context,
   }
 }
+
+const githubBase = <A, E, R>(url: string, self: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
+      process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = url
+      return previous
+    }),
+    () => self,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous) process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL = previous
+        else delete process.env.OPENCODE_REPO_CLONE_GITHUB_BASE_URL
+      }),
+  )
+
+const git = Effect.fn("GlobToolTest.git")(function* (cwd: string, args: string[]) {
+  return yield* Effect.promise(async () => {
+    const proc = Bun.spawn(["git", ...args], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    if (code !== 0) throw new Error(stderr.trim() || stdout.trim() || `git ${args.join(" ")} failed`)
+    return stdout.trim()
+  })
+})
 
 describe("tool.glob", () => {
   it.instance("matches files from a directory path", () =>
@@ -107,34 +132,5 @@ describe("tool.glob", () => {
         expect(err instanceof Error ? err.message : String(err)).toContain("glob path must be a directory")
       }
     }),
-  )
-
-  references.instance(
-    "does not ask for external_directory permission inside configured git references",
-    () =>
-      Effect.gen(function* () {
-        yield* TestInstance
-        const fs = yield* FSUtil.Service
-        const cache = path.join(Global.Path.repos, "github.com", "opencode-glob-reference", "repo")
-        yield* fs.remove(cache, { recursive: true }).pipe(Effect.ignore)
-        yield* Effect.addFinalizer(() => fs.remove(cache, { recursive: true }).pipe(Effect.ignore))
-        yield* fs.writeWithDirs(path.join(cache, "src", "index.ts"), "export const value = 1\n")
-
-        const { items, next } = asks()
-        const info = yield* GlobTool
-        const glob = yield* info.init()
-        const result = yield* glob.execute({ pattern: "*.ts", path: path.join(cache, "src") }, next)
-
-        expect(result.metadata.count).toBe(1)
-        expect(full(result.output)).toContain(full(path.join(cache, "src", "index.ts")))
-        expect(items.find((item) => item.permission === "external_directory")).toBeUndefined()
-      }),
-    {
-      config: {
-        reference: {
-          docs: "opencode-glob-reference/repo",
-        },
-      },
-    },
   )
 })
