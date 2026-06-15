@@ -664,6 +664,18 @@ export type Todo = {
   priority: string
 }
 
+export type PermissionDisplay = {
+  uiKind?: string
+  title?: string
+  rawInput?: unknown
+  locations?: Array<{
+    [key: string]: unknown
+  }>
+  previewCard?: unknown
+  formSchema?: unknown
+  toolCallId?: string
+}
+
 export type QuestionOption = {
   /**
    * Display text (1-5 words, concise)
@@ -1393,6 +1405,7 @@ export type GlobalEvent = {
             [key: string]: unknown
           }
           always: Array<string>
+          display?: PermissionDisplay
           tool?: {
             messageID: string
             callID: string
@@ -2610,6 +2623,7 @@ export type PermissionRequest = {
     [key: string]: unknown
   }
   always: Array<string>
+  display?: PermissionDisplay
   tool?: {
     messageID: string
     callID: string
@@ -5123,6 +5137,7 @@ export type EventPermissionAsked = {
       [key: string]: unknown
     }
     always: Array<string>
+    display?: PermissionDisplay
     tool?: {
       messageID: string
       callID: string

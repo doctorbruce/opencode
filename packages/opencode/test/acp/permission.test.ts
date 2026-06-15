@@ -94,6 +94,13 @@ function permissionAsked(
   input: {
     permission?: string
     metadata?: Record<string, unknown>
+    display?: {
+      uiKind?: string
+      title?: string
+      toolCallId?: string
+      rawInput?: unknown
+      locations?: Array<Record<string, unknown>>
+    }
     tool?: { messageID: string; callID: string }
   } = {},
 ) {
@@ -107,6 +114,7 @@ function permissionAsked(
       patterns: ["*"],
       metadata: input.metadata ?? { command: "printf hello" },
       always: [],
+      ...(input.display ? { display: input.display } : {}),
       ...(input.tool ? { tool: input.tool } : {}),
     },
   } as PermissionEvent
@@ -197,6 +205,40 @@ describe("acp permissions", () => {
           patterns: ["/tmp/outside/*"],
         },
         locations: [{ path: "/tmp/outside" }],
+      },
+    })
+  })
+
+  it("uses permission display details when available", async () => {
+    const harness = createHarness()
+    await createSession(harness.session, "ses_a")
+
+    harness.subscription.handle(
+      permissionAsked("ses_a", "perm_display", {
+        permission: "confirmable.operation",
+        metadata: { command: "legacy" },
+        display: {
+          uiKind: "mail_preview",
+          title: "Send customer mail",
+          toolCallId: "display-call",
+          rawInput: { to: "customer@example.com" },
+          locations: [{ path: "/workspace/mail-draft.md" }],
+        },
+        tool: { messageID: "msg_1", callID: "legacy-call" },
+      }),
+    )
+
+    await pollUntil(() => harness.replies.length === 1, "display permission was never replied")
+
+    expect(harness.requests[0]).toMatchObject({
+      sessionId: "ses_a",
+      toolCall: {
+        toolCallId: "display-call",
+        status: "pending",
+        title: "Send customer mail",
+        rawInput: { to: "customer@example.com" },
+        kind: "other",
+        locations: [{ path: "/workspace/mail-draft.md" }],
       },
     })
   })

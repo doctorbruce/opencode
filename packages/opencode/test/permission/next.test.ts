@@ -651,6 +651,40 @@ it.instance(
 )
 
 it.instance(
+  "ask - preserves display details in pending request",
+  () =>
+    Effect.gen(function* () {
+      const display = {
+        uiKind: "mail_preview",
+        title: "Send mail",
+        toolCallId: "tool_display",
+        rawInput: { to: "customer@example.com", subject: "Proposal" },
+        locations: [{ path: "/workspace/proposal.md" }],
+        previewCard: {
+          title: "Send mail",
+          fields: [{ label: "To", value: "customer@example.com" }],
+        },
+      }
+      const fiber = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "confirmable.operation",
+        patterns: ["confirmable.operation", "mail.write", "send"],
+        metadata: { requestType: "confirmable_operation" },
+        always: [],
+        ruleset: [],
+        display,
+      }).pipe(Effect.forkScoped)
+
+      const items = yield* waitForPending(1)
+      expect(items[0].display).toEqual(display)
+
+      yield* rejectAll()
+      yield* Fiber.await(fiber)
+    }),
+  { git: true },
+)
+
+it.instance(
   "ask - publishes asked event",
   () =>
     Effect.gen(function* () {

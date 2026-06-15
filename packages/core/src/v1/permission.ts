@@ -25,6 +25,17 @@ export type Rule = typeof Rule.Type
 export const Ruleset = Schema.Array(Rule).annotate({ identifier: "PermissionRuleset" })
 export type Ruleset = typeof Ruleset.Type
 
+export const Display = Schema.Struct({
+  uiKind: Schema.String.pipe(Schema.optional),
+  title: Schema.String.pipe(Schema.optional),
+  rawInput: Schema.Unknown.pipe(Schema.optional),
+  locations: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)).pipe(Schema.optional),
+  previewCard: Schema.Unknown.pipe(Schema.optional),
+  formSchema: Schema.Unknown.pipe(Schema.optional),
+  toolCallId: Schema.String.pipe(Schema.optional),
+}).annotate({ identifier: "PermissionDisplay" })
+export type Display = typeof Display.Type
+
 export const Request = Schema.Struct({
   id: ID,
   sessionID: SessionSchema.ID,
@@ -32,6 +43,7 @@ export const Request = Schema.Struct({
   patterns: Schema.Array(Schema.String),
   metadata: Schema.Record(Schema.String, Schema.Unknown),
   always: Schema.Array(Schema.String),
+  display: Display.pipe(Schema.optional),
   tool: Schema.Struct({
     messageID: Schema.String,
     callID: Schema.String,

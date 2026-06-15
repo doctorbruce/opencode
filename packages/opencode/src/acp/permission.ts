@@ -1,4 +1,9 @@
-import type { AgentSideConnection, PermissionOption, RequestPermissionResponse } from "@agentclientprotocol/sdk"
+import type {
+  AgentSideConnection,
+  PermissionOption,
+  RequestPermissionResponse,
+  ToolCallLocation,
+} from "@agentclientprotocol/sdk"
 import * as Log from "@opencode-ai/core/util/log"
 import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
 import { applyPatch } from "diff"
@@ -12,6 +17,13 @@ const log = Log.create({ service: "acp-permission" })
 type PermissionEvent = Extract<Event, { type: "permission.asked" }>
 type Reply = "once" | "always" | "reject"
 type Connection = Partial<Pick<AgentSideConnection, "requestPermission" | "writeTextFile">>
+type PermissionDisplay = {
+  uiKind?: string
+  title?: string
+  toolCallId?: string
+  rawInput?: unknown
+  locations?: Array<Record<string, unknown>>
+}
 
 const permissionOptions: PermissionOption[] = [
   { optionId: "once", kind: "allow_once", name: "Allow once" },
@@ -60,16 +72,17 @@ export class Handler {
       return
     }
 
+    const display = permissionDisplay(permission)
     const result = await this.input.connection
       .requestPermission({
         sessionId: permission.sessionID,
         toolCall: {
-          toolCallId: permission.tool?.callID ?? permission.id,
+          toolCallId: displayString(display.toolCallId) ?? permission.tool?.callID ?? permission.id,
           status: "pending",
-          title: permission.permission,
-          rawInput: permission.metadata,
+          title: displayString(display.title) ?? permission.permission,
+          rawInput: display.rawInput ?? permission.metadata,
           kind: toToolKind(permission.permission),
-          locations: toLocations(permission.permission, permission.metadata),
+          locations: displayLocations(display.locations) ?? toLocations(permission.permission, permission.metadata),
         },
         options: permissionOptions,
       })
@@ -140,6 +153,26 @@ function selectedReply(result: RequestPermissionResponse): Reply {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : undefined
+}
+
+function displayString(value: unknown) {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function displayLocations(locations: PermissionDisplay["locations"]): ToolCallLocation[] | undefined {
+  if (!locations) return undefined
+  return locations.flatMap((location): ToolCallLocation[] => {
+    const path = displayString(location.path)
+    return path ? [{ path }] : []
+  })
+}
+
+function permissionDisplay(permission: PermissionEvent["properties"]): PermissionDisplay {
+  const display = (permission as PermissionEvent["properties"] & { display?: unknown }).display
+  if (!display || typeof display !== "object") return {}
+  return display as PermissionDisplay
 }
 
 export * as ACPPermission from "./permission"

@@ -104,6 +104,7 @@ export const layer = Layer.effect(
         patterns: request.patterns,
         metadata: request.metadata,
         always: request.always,
+        ...(request.display ? { display: request.display } : {}),
         tool: request.tool,
       }
       log.info("asking", { id, permission: info.permission, patterns: info.patterns })
