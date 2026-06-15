@@ -32,6 +32,71 @@ import { LLMRequestPrep } from "./llm/request"
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 
+const promptValueSize = (value: unknown): number => {
+  if (typeof value === "string") return value.length
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value).length
+  if (Array.isArray(value)) return value.reduce<number>((sum, item) => sum + promptValueSize(item), 0)
+  if (!value || typeof value !== "object") return 0
+  return Object.values(value as Record<string, unknown>).reduce<number>((sum, item) => sum + promptValueSize(item), 0)
+}
+
+const promptSummary = (messages: ModelMessage[], system: string[]) => {
+  const messageSizes = messages.map((message, index) => ({
+    index,
+    role: String(message.role),
+    chars: promptValueSize(message.content),
+  }))
+  const largest = messageSizes.reduce(
+    (max, item) => (item.chars > max.chars ? item : max),
+    { index: -1, role: "none", chars: 0 },
+  )
+  const partTypes = messages
+    .flatMap((message): unknown[] => (Array.isArray(message.content) ? [...message.content] : []))
+    .map((part) =>
+      typeof part === "object" && part !== null && "type" in part
+        ? String((part as { readonly type?: unknown }).type)
+        : "unknown",
+    )
+
+  return {
+    messageCount: messages.length,
+    contentPartCount: messages.reduce<number>(
+      (sum, message) => sum + (Array.isArray(message.content) ? message.content.length : 1),
+      0,
+    ),
+    messageChars: promptValueSize(messages),
+    systemCount: system.length,
+    systemChars: system.reduce((sum, item) => sum + item.length, 0),
+    largestMessage: largest,
+    roleCounts: messages.reduce<Record<string, number>>((acc, message) => {
+      acc[String(message.role)] = (acc[String(message.role)] ?? 0) + 1
+      return acc
+    }, {}),
+    partTypeCounts: partTypes.reduce<Record<string, number>>((acc, type) => {
+      acc[type] = (acc[type] ?? 0) + 1
+      return acc
+    }, {}),
+  }
+}
+
+const streamEventType = (value: unknown) =>
+  typeof value === "object" && value !== null && "type" in value
+    ? String((value as { readonly type?: unknown }).type)
+    : typeof value
+
+const isContentDelta = (event: LLMEvent) =>
+  event.type === "text-delta" || event.type === "reasoning-delta" || event.type === "tool-input-delta"
+
+const streamLogger = (input: Pick<StreamInput, "model" | "sessionID" | "small" | "agent">) =>
+  log
+    .clone()
+    .tag("providerID", input.model.providerID)
+    .tag("modelID", input.model.id)
+    .tag("session.id", input.sessionID)
+    .tag("small", (input.small ?? false).toString())
+    .tag("agent", input.agent.name)
+    .tag("mode", input.agent.mode)
+
 export type StreamInput = {
   user: SessionV1.User
   sessionID: string
@@ -83,14 +148,8 @@ const live: Layer.Layer<
     const flags = yield* RuntimeFlags.Service
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
-      const l = log
-        .clone()
-        .tag("providerID", input.model.providerID)
-        .tag("modelID", input.model.id)
-        .tag("session.id", input.sessionID)
-        .tag("small", (input.small ?? false).toString())
-        .tag("agent", input.agent.name)
-        .tag("mode", input.agent.mode)
+      const startedAt = Date.now()
+      const l = streamLogger(input)
       l.info("stream", {
         modelID: input.model.id,
         providerID: input.model.providerID,
@@ -115,6 +174,17 @@ const live: Layer.Layer<
         flags,
         isWorkflow,
         promptLanguage: cfg.prompt_language ?? "en",
+      })
+      const preparedAt = Date.now()
+      l.info("prompt prepared", {
+        elapsedMs: preparedAt - startedAt,
+        currentUserChars: promptValueSize((input.user as { readonly parts?: unknown }).parts),
+        raw: promptSummary(input.messages, input.system),
+        prepared: promptSummary(prepared.messages, prepared.system),
+        availableToolCount: Object.keys(input.tools).length,
+        activeToolCount: Object.keys(prepared.tools).length,
+        maxOutputTokens: prepared.params.maxOutputTokens,
+        runtimeNativeEnabled: flags.experimentalNativeLlm,
       })
 
       // Wire up toolExecutor for DWS workflow models so that tool calls
@@ -256,6 +326,7 @@ const live: Layer.Layer<
           return {
             type: "native" as const,
             stream: native.stream,
+            startedAt,
           }
         }
         yield* Effect.logInfo("llm runtime selected").pipe(
@@ -278,80 +349,132 @@ const live: Layer.Layer<
       )
       // Default runtime path: AI SDK owns provider execution and tool dispatch;
       // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
-      return {
-        type: "ai-sdk" as const,
-        result: streamText({
-          // Copilot returns the authoritative billed amount only in provider-specific response fields.
-          includeRawChunks: input.model.providerID.includes("github-copilot"),
-          onError(error) {
-            l.error("stream error", {
-              error,
+      const streamTextStartedAt = Date.now()
+      l.info("ai-sdk streamText starting", {
+        elapsedMs: streamTextStartedAt - startedAt,
+      })
+      const providerPromptObserved = { transformed: false }
+      const result = streamText({
+        // Copilot returns the authoritative billed amount only in provider-specific response fields.
+        includeRawChunks: input.model.providerID.includes("github-copilot"),
+        onError(error) {
+          l.error("stream error", {
+            error,
+          })
+        },
+        async experimental_repairToolCall(failed) {
+          const lower = failed.toolCall.toolName.toLowerCase()
+          if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
+            l.info("repairing tool call", {
+              tool: failed.toolCall.toolName,
+              repaired: lower,
             })
-          },
-          async experimental_repairToolCall(failed) {
-            const lower = failed.toolCall.toolName.toLowerCase()
-            if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
-              l.info("repairing tool call", {
-                tool: failed.toolCall.toolName,
-                repaired: lower,
-              })
-              return {
-                ...failed.toolCall,
-                toolName: lower,
-              }
-            }
             return {
               ...failed.toolCall,
-              input: JSON.stringify({
-                tool: failed.toolCall.toolName,
-                error: failed.error.message,
-              }),
-              toolName: "invalid",
+              toolName: lower,
             }
-          },
-          temperature: prepared.params.temperature,
-          topP: prepared.params.topP,
-          topK: prepared.params.topK,
-          providerOptions: ProviderTransform.providerOptions(input.model, prepared.params.options),
-          activeTools: Object.keys(prepared.tools).filter((x) => x !== "invalid"),
-          tools: prepared.tools,
-          toolChoice: input.toolChoice,
-          maxOutputTokens: prepared.params.maxOutputTokens,
-          abortSignal: input.abort,
-          headers: prepared.headers,
-          maxRetries: input.retries ?? 0,
-          messages: prepared.messages,
-          model: wrapLanguageModel({
-            model: language,
-            middleware: [
-              {
-                specificationVersion: "v3" as const,
-                async transformParams(args) {
-                  if (args.type === "stream") {
-                    // @ts-expect-error
-                    args.params.prompt = ProviderTransform.message(
-                      args.params.prompt,
-                      input.model,
-                      prepared.messageTransformOptions,
-                    )
+          }
+          return {
+            ...failed.toolCall,
+            input: JSON.stringify({
+              tool: failed.toolCall.toolName,
+              error: failed.error.message,
+            }),
+            toolName: "invalid",
+          }
+        },
+        temperature: prepared.params.temperature,
+        topP: prepared.params.topP,
+        topK: prepared.params.topK,
+        providerOptions: ProviderTransform.providerOptions(input.model, prepared.params.options),
+        activeTools: Object.keys(prepared.tools).filter((x) => x !== "invalid"),
+        tools: prepared.tools,
+        toolChoice: input.toolChoice,
+        maxOutputTokens: prepared.params.maxOutputTokens,
+        abortSignal: input.abort,
+        headers: prepared.headers,
+        maxRetries: input.retries ?? 0,
+        messages: prepared.messages,
+        model: wrapLanguageModel({
+          model: language,
+          middleware: [
+            {
+              specificationVersion: "v3" as const,
+              async transformParams(args) {
+                if (args.type === "stream") {
+                  const transformed = ProviderTransform.message(
+                    args.params.prompt,
+                    input.model,
+                    prepared.messageTransformOptions,
+                  )
+                  // @ts-expect-error
+                  args.params.prompt = transformed
+                  if (!providerPromptObserved.transformed) {
+                    providerPromptObserved.transformed = true
+                    l.info("provider prompt transformed", {
+                      elapsedMs: Date.now() - startedAt,
+                      promptChars: promptValueSize(transformed),
+                      promptItemCount: Array.isArray(transformed) ? transformed.length : undefined,
+                    })
                   }
-                  return args.params
-                },
+                }
+                return args.params
               },
-            ],
-          }),
-          experimental_telemetry: {
-            isEnabled: cfg.experimental?.openTelemetry,
-            functionId: "session.llm",
-            tracer: telemetryTracer,
-            metadata: {
-              userId: cfg.username ?? "unknown",
-              sessionId: input.sessionID,
             },
-          },
+          ],
         }),
+        experimental_telemetry: {
+          isEnabled: cfg.experimental?.openTelemetry,
+          functionId: "session.llm",
+          tracer: telemetryTracer,
+          metadata: {
+            userId: cfg.username ?? "unknown",
+            sessionId: input.sessionID,
+          },
+        },
+      })
+      l.info("ai-sdk streamText created", {
+        elapsedMs: Date.now() - streamTextStartedAt,
+        totalElapsedMs: Date.now() - startedAt,
+      })
+      return {
+        type: "ai-sdk" as const,
+        result,
+        startedAt,
       }
     })
+
+    const observeLLMStream = (
+      input: StreamInput,
+      runtime: "native" | "ai-sdk",
+      startedAt: number,
+      stream: Stream.Stream<LLMEvent, unknown>,
+    ) => {
+      const observed = { firstEvent: false, firstDelta: false }
+      const l = streamLogger(input)
+      return stream.pipe(
+        Stream.tap((event) =>
+          Effect.sync(() => {
+            if (!observed.firstEvent) {
+              observed.firstEvent = true
+              l.info("llm first event", {
+                runtime,
+                eventType: event.type,
+                elapsedMs: Date.now() - startedAt,
+              })
+            }
+            if (!observed.firstDelta && isContentDelta(event)) {
+              observed.firstDelta = true
+              l.info("llm first content delta", {
+                runtime,
+                eventType: event.type,
+                elapsedMs: Date.now() - startedAt,
+              })
+            }
+          }),
+        ),
+      )
+    }
 
     const stream: Interface["stream"] = (input) =>
       Stream.scoped(
@@ -364,16 +487,29 @@ const live: Layer.Layer<
 
             const result = yield* run({ ...input, abort: ctrl.signal })
 
-            if (result.type === "native") return result.stream
+            if (result.type === "native") return observeLLMStream(input, "native", result.startedAt, result.stream)
 
             // Adapter seam: both runtimes expose the same LLMEvent stream. Native
             // already returns one; AI SDK streams are converted here.
+            const rawObserved = { firstEvent: false }
+            const l = streamLogger(input)
             const state = LLMAISDK.adapterState()
             return Stream.fromAsyncIterable(result.result.fullStream, (e) =>
               e instanceof Error ? e : new Error(String(e)),
             ).pipe(
+              Stream.tap((event) =>
+                Effect.sync(() => {
+                  if (rawObserved.firstEvent) return
+                  rawObserved.firstEvent = true
+                  l.info("ai-sdk first raw event", {
+                    eventType: streamEventType(event),
+                    elapsedMs: Date.now() - result.startedAt,
+                  })
+                }),
+              ),
               Stream.mapEffect((event) => LLMAISDK.toLLMEvents(state, event)),
               Stream.flatMap((events) => Stream.fromIterable(events)),
+              (stream) => observeLLMStream(input, "ai-sdk", result.startedAt, stream),
             )
           }),
         ),

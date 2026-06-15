@@ -90,6 +90,9 @@ interface ProcessorContext extends Input {
 
 type StreamEvent = LLMEvent
 
+const isContentDelta = (event: StreamEvent) =>
+  event.type === "text-delta" || event.type === "reasoning-delta" || event.type === "tool-input-delta"
+
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionProcessor") {}
 
 export const layer = Layer.effect(
@@ -956,7 +959,11 @@ export const layer = Layer.effect(
       })
 
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
-        slog.info("process")
+        const startedAt = Date.now()
+        slog.info("process", {
+          providerID: streamInput.model.providerID,
+          modelID: streamInput.model.id,
+        })
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
@@ -966,10 +973,37 @@ export const layer = Layer.effect(
             ctx.currentTextID = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
+            const streamRequestedAt = Date.now()
             const stream = llm.stream(streamInput)
+            const observed = { firstEvent: false, firstDelta: false }
+            slog.info("llm stream requested", {
+              elapsedMs: streamRequestedAt - startedAt,
+              providerID: streamInput.model.providerID,
+              modelID: streamInput.model.id,
+            })
 
             yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
+              Stream.tap((event) =>
+                Effect.gen(function* () {
+                  if (!observed.firstEvent) {
+                    observed.firstEvent = true
+                    slog.info("llm first event", {
+                      eventType: event.type,
+                      elapsedMs: Date.now() - startedAt,
+                      sinceStreamRequestedMs: Date.now() - streamRequestedAt,
+                    })
+                  }
+                  if (!observed.firstDelta && isContentDelta(event)) {
+                    observed.firstDelta = true
+                    slog.info("llm first content delta", {
+                      eventType: event.type,
+                      elapsedMs: Date.now() - startedAt,
+                      sinceStreamRequestedMs: Date.now() - streamRequestedAt,
+                    })
+                  }
+                  yield* handleEvent(event)
+                }),
+              ),
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )

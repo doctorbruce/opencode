@@ -142,6 +142,14 @@ bun run script/build.ts --single --amio-agent --skip-install
 
 ## 2026-06-15
 
+### Prompt first-token diagnostics
+
+- Added prompt size diagnostics to the session LLM runtime without logging prompt contents.
+- The runtime now logs raw and prepared message counts, content part counts, estimated character totals, largest message size, role/type distributions, active tool counts, and max output tokens.
+- The AI SDK path now logs when `streamText` is created, when the provider prompt is transformed, the first raw AI SDK stream event, the first normalized LLM event, and the first content delta.
+- `SessionProcessor.process` now logs the time from processor start and `llm.stream` request to the first normalized LLM event and first content delta.
+- These diagnostics help determine whether slow perceived first tokens come from oversized history, local preparation, AI SDK/provider TTFB, or downstream processor/event handling.
+
 ### Permission display metadata
 
 - Added optional `display` to `PermissionV1.Request` / `PermissionV1.AskInput`.
