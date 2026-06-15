@@ -9,10 +9,15 @@ import { Auth } from "../auth"
 import { ProviderTransform } from "@/provider/transform"
 
 import PROMPT_GENERATE from "./generate.txt"
+import PROMPT_GENERATE_ZH from "./generate.zh.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_COMPACTION_ZH from "./prompt-zh/compaction.txt"
+import PROMPT_EXPLORE_ZH from "./prompt-zh/explore.txt"
+import PROMPT_SUMMARY_ZH from "./prompt-zh/summary.txt"
+import PROMPT_TITLE_ZH from "./prompt-zh/title.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -92,6 +97,7 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make<State>(
       Effect.fn("Agent.state")(function* (ctx) {
         const cfg = yield* config.get()
+        const zh = cfg.prompt_language === "zh"
         const skillDirs = yield* skill.dirs()
         const whitelistedDirs = [
           Truncate.GLOB,
@@ -195,7 +201,7 @@ export const layer = Layer.effect(
               user,
             ),
             description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
-            prompt: PROMPT_EXPLORE,
+            prompt: zh ? PROMPT_EXPLORE_ZH : PROMPT_EXPLORE,
             options: {},
             mode: "subagent",
             native: true,
@@ -205,7 +211,7 @@ export const layer = Layer.effect(
             mode: "primary",
             native: true,
             hidden: true,
-            prompt: PROMPT_COMPACTION,
+            prompt: zh ? PROMPT_COMPACTION_ZH : PROMPT_COMPACTION,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
@@ -229,7 +235,7 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            prompt: PROMPT_TITLE,
+            prompt: zh ? PROMPT_TITLE_ZH : PROMPT_TITLE,
           },
           summary: {
             name: "summary",
@@ -244,7 +250,7 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            prompt: PROMPT_SUMMARY,
+            prompt: zh ? PROMPT_SUMMARY_ZH : PROMPT_SUMMARY,
           },
         }
 
@@ -361,7 +367,7 @@ export const layer = Layer.effect(
           ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
           : undefined
 
-        const system = [PROMPT_GENERATE]
+        const system = [(yield* config.get()).prompt_language === "zh" ? PROMPT_GENERATE_ZH : PROMPT_GENERATE]
         yield* plugin.trigger("experimental.chat.system.transform", { model: resolved }, { system })
         const existing = yield* InstanceState.useEffect(state, (s) => s.list())
 

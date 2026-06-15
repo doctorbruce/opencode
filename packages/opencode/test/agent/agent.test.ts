@@ -211,6 +211,27 @@ it.instance(
 )
 
 it.instance(
+  "prompt_language zh localizes native agent prompts without changing custom prompts",
+  () =>
+    Effect.gen(function* () {
+      const explore = yield* load((svc) => svc.get("explore"))
+      const custom = yield* load((svc) => svc.get("custom"))
+      expect(explore?.prompt).toContain("文件搜索")
+      expect(custom?.prompt).toBe("Keep this custom prompt exactly.")
+    }),
+  {
+    config: {
+      prompt_language: "zh",
+      agent: {
+        custom: {
+          prompt: "Keep this custom prompt exactly.",
+        },
+      },
+    },
+  },
+)
+
+it.instance(
   "agent disable removes agent from list",
   () =>
     Effect.gen(function* () {

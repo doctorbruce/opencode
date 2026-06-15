@@ -368,6 +368,45 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     expect(result.params.options.include).toBeUndefined()
   })
 
+  test("request preparation uses Chinese provider prompt when promptLanguage is zh", async () => {
+    const model = createGpt5Model("gpt-5.4")
+    const result = await Effect.runPromise(
+      LLMRequestPrep.prepare({
+        user: {
+          id: "msg_user-test",
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "test",
+          model: { providerID: "openai", modelID: "gpt-5.4" },
+        } as any,
+        sessionID,
+        model,
+        agent: {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [],
+        } as any,
+        promptLanguage: "zh",
+        system: [],
+        messages: [{ role: "user", content: "Hello" }],
+        tools: {},
+        provider: { id: "openai", options: {} } as any,
+        auth: undefined,
+        plugin: {
+          trigger: (_name: string, _input: unknown, output: unknown) => Effect.succeed(output),
+          list: () => Effect.succeed([]),
+          init: () => Effect.void,
+        } as any,
+        flags: { outputTokenMax: 32_000, client: "test" } as any,
+        isWorkflow: false,
+      } as any),
+    )
+    expect(result.messages[0]).toMatchObject({ role: "system" })
+    expect(String(result.messages[0]?.content)).toContain("你是")
+  })
+
   test("gpt-5.1 should have textVerbosity set to low", () => {
     const model = createGpt5Model("gpt-5.1")
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })

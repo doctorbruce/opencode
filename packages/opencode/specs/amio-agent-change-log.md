@@ -118,6 +118,14 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Extended `prompt.failed` with optional `requestID`, `finishReason`, `usage`, plus `stopReason:"error"`.
 - Added `prompt.cancelled` for cancelled prompt turns, so `MessageAbortedError` is no longer projected as a normal prompt failure.
 - `usage` is emitted from the assistant message `cost` and `tokens` captured by opencode, keeping prompt-scoped accounting on the runtime side.
+
+### Chinese prompt switch
+
+- Added `prompt_language` config with `en` and `zh` values; `en` remains the default.
+- Added Chinese prompt variants for built-in session prompts and native agent prompts.
+- Routed `prompt_language: "zh"` through provider prompt selection, built-in agent prompts, environment context, skills context, plan/build reminders, structured-output reminders, max-step reminders, and invalid reference reminders.
+- Kept custom user agent prompts unchanged and preserved tool/protocol identifiers, parameter names, tags, paths, and schema/tool names inside localized prompt text.
+- The Chinese prompt set is native localized wording rather than a generic top-level language meta-instruction.
 - Added regression coverage for completed, failed, and cancelled prompt-scoped events.
 
 ### Change log requirement
@@ -131,3 +139,14 @@ bun run script/build.ts --single --amio-agent --skip-install
 - The session projector now writes `NULL` for unarchived session snapshots so clearing `time.archived` persists instead of leaving the old SQL value in place.
 - The public OpenAPI schema and generated JavaScript SDK now expose `session.update` archive timestamps as `number | null`.
 - Added HTTP API and OpenAPI regression coverage for archive clearing.
+
+## 2026-06-15
+
+### Permission display metadata
+
+- Added optional `display` to `PermissionV1.Request` / `PermissionV1.AskInput`.
+- `display` can carry `uiKind`, `title`, `rawInput`, `locations`, `previewCard`, `formSchema`, and `toolCallId`.
+- `Permission.ask` now preserves `display` in pending requests, `permission.asked` events, and permission list responses.
+- The opencode ACP permission projection now prefers `display.toolCallId`, `display.title`, `display.rawInput`, and `display.locations` when present.
+- Regenerated the JavaScript SDK v2 types so `permission.asked` consumers can see the new field.
+- This gives Astron a prompt/runtime-produced permission UI contract and reduces adapter-side parsing of mail, credential, and edit preview metadata.

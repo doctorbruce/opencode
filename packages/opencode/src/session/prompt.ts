@@ -17,6 +17,7 @@ import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
+import MAX_STEPS_ZH from "../session/prompt-zh/max-steps.txt"
 import { ToolRegistry } from "@/tool/registry"
 import { MCP } from "../mcp"
 import { LSP } from "@/lsp/lsp"
@@ -80,6 +81,7 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+const STRUCTURED_OUTPUT_SYSTEM_PROMPT_ZH = `IMPORTANT: 用户请求 structured output。你必须使用 StructuredOutput tool 提供最终回复。不要用普通文本回复；必须调用 StructuredOutput tool，并按 schema 格式化答案。`
 
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
@@ -149,6 +151,7 @@ export const layer = Layer.effect(
     const resolveReferenceParts = Effect.fnUntraced(function* (template: string) {
       const parts: Types.DeepMutable<PromptInput["parts"]> = []
       const seen = new Set<string>()
+      const promptLanguage = (yield* config.get()).prompt_language ?? "en"
       yield* Effect.forEach(
         ConfigMarkdown.files(template),
         Effect.fnUntraced(function* (match) {
@@ -163,7 +166,7 @@ export const layer = Layer.effect(
           const start = match.index ?? 0
           const source = { value: match[0], start, end: start + match[0].length }
           if (reference.kind === "invalid") {
-            parts.push(referenceTextPart({ reference, source }))
+            parts.push(referenceTextPart({ reference, source, promptLanguage }))
             return
           }
 
@@ -1351,7 +1354,8 @@ export const layer = Layer.effect(
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
-          msgs = yield* SessionReminders.apply({ messages: msgs, agent, session }).pipe(
+          const promptLanguage = (yield* config.get()).prompt_language ?? "en"
+          msgs = yield* SessionReminders.apply({ messages: msgs, agent, session, promptLanguage }).pipe(
             Effect.provideService(RuntimeFlags.Service, flags),
             Effect.provideService(FSUtil.Service, fsys),
             Effect.provideService(Session.Service, sessions),
@@ -1431,14 +1435,24 @@ export const layer = Layer.effect(
                 for (const p of m.parts) {
                   if (p.type !== "text" || p.ignored || p.synthetic) continue
                   if (!p.text.trim()) continue
-                  p.text = [
-                    "<system-reminder>",
-                    "The user sent the following message:",
-                    p.text,
-                    "",
-                    "Please address this message and continue with your tasks.",
-                    "</system-reminder>",
-                  ].join("\n")
+                  p.text =
+                    promptLanguage === "zh"
+                      ? [
+                          "<system-reminder>",
+                          "用户发送了以下消息：",
+                          p.text,
+                          "",
+                          "请处理这条消息，并继续你的任务。",
+                          "</system-reminder>",
+                        ].join("\n")
+                      : [
+                          "<system-reminder>",
+                          "The user sent the following message:",
+                          p.text,
+                          "",
+                          "Please address this message and continue with your tasks.",
+                          "</system-reminder>",
+                        ].join("\n")
                 }
               }
             }
@@ -1446,14 +1460,15 @@ export const layer = Layer.effect(
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
             const [skills, env, instructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent),
-              sys.environment(model),
+              sys.skills(agent, promptLanguage),
+              sys.environment(model, promptLanguage),
               instruction.system().pipe(Effect.orDie),
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
             const system = [...env, ...instructions, ...(skills ? [skills] : [])]
             const format = lastUser.format ?? { type: "text" as const }
-            if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+            if (format.type === "json_schema")
+              system.push(promptLanguage === "zh" ? STRUCTURED_OUTPUT_SYSTEM_PROMPT_ZH : STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
               user: lastUser,
               agent,
@@ -1461,7 +1476,12 @@ export const layer = Layer.effect(
               sessionID,
               parentSessionID: session.parentID,
               system,
-              messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
+              messages: [
+                ...modelMsgs,
+                ...(isLastStep
+                  ? [{ role: "assistant" as const, content: promptLanguage === "zh" ? MAX_STEPS_ZH : MAX_STEPS }]
+                  : []),
+              ],
               tools,
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,

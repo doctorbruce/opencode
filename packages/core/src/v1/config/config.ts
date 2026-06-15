@@ -78,6 +78,9 @@ export const Info = Schema.Struct({
     description:
       "Default agent to use when none is specified. Must be a primary agent. Falls back to 'build' if not set or if the specified agent is invalid.",
   }),
+  prompt_language: Schema.optional(Schema.Literals(["en", "zh"])).annotate({
+    description: "Prompt language for built-in model-facing instructions. Defaults to 'en'.",
+  }),
   username: Schema.optional(Schema.String).annotate({
     description: "Custom username to display in conversations instead of system username",
   }),

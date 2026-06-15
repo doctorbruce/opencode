@@ -1307,6 +1307,21 @@ test("config parser preserves permission order while rejecting unknown top-level
   }
 })
 
+test("config parser accepts prompt_language zh", () => {
+  const config = ConfigParse.schema(ConfigV1.Info, { prompt_language: "zh" }, "test")
+  expect(config.prompt_language).toBe("zh")
+})
+
+test("config parser rejects unknown prompt_language values", () => {
+  try {
+    ConfigParse.schema(ConfigV1.Info, { prompt_language: "cn" }, "test")
+    throw new Error("expected config parse to fail")
+  } catch (err) {
+    const error = err as { data?: { issues?: Array<{ code?: string; path?: string[] }> } }
+    expect(error.data?.issues?.[0]).toMatchObject({ path: ["prompt_language"] })
+  }
+})
+
 // MCP config merging tests
 
 it.instance("project config can override MCP server enabled status", () =>

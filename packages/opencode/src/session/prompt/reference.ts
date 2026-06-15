@@ -2,6 +2,7 @@ import { Option, Schema } from "effect"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { MessageV2 } from "../message-v2"
 import { Reference } from "@/reference/reference"
+import type { PromptLanguage } from "../system"
 
 const Source = Schema.Struct({
   value: Schema.String,
@@ -34,6 +35,7 @@ export function referenceTextPart(input: {
   target?: string
   targetPath?: string
   problem?: string
+  promptLanguage?: PromptLanguage
 }): SessionV1.TextPartInput {
   const metadata: ReferencePromptMetadata = {
     name: input.reference.name,
@@ -50,6 +52,24 @@ export function referenceTextPart(input: {
     source: input.source,
   }
   const label = metadata.target === undefined ? `@${metadata.name}` : `@${metadata.name}/${metadata.target}`
+  if (input.promptLanguage === "zh")
+    return {
+      type: "text",
+      synthetic: true,
+      text: [
+        `引用了已配置的 reference ${label}。`,
+        ...(metadata.kind === "local" ? ["类型: local directory"] : []),
+        ...(metadata.kind === "git" ? ["类型: git repository"] : []),
+        ...(metadata.repository ? [`Repository: ${metadata.repository}`] : []),
+        ...(metadata.branch ? [`Branch/ref: ${metadata.branch}`] : []),
+        ...(metadata.path ? [`Reference root: ${metadata.path}`] : []),
+        ...(metadata.targetPath ? [`Resolved path: ${metadata.targetPath}`] : []),
+        ...(metadata.problem
+          ? [`Problem: ${metadata.problem}`]
+          : ["有帮助时，使用 Read、Glob 和 Grep 检查这个已配置 reference。"]),
+      ].join("\n"),
+      metadata: { reference: metadata },
+    }
   return {
     type: "text",
     synthetic: true,

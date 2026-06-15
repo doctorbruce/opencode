@@ -1,11 +1,14 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Agent } from "../../src/agent/agent"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Skill } from "../../src/skill"
 import { Permission } from "../../src/permission"
 import { SystemPrompt } from "../../src/session/system"
+import type { Provider } from "../../src/provider/provider"
 import { testEffect } from "../lib/effect"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 
 const skills: Skill.Info[] = [
   {
@@ -40,6 +43,56 @@ const build: Agent.Info = {
   options: {},
 }
 
+function model(id: string): Provider.Model {
+  return {
+    id: ModelV2.ID.make(id),
+    providerID: ProviderV2.ID.make("test"),
+    api: {
+      id,
+      url: "https://example.com",
+      npm: "@ai-sdk/openai",
+    },
+    name: id,
+    capabilities: {
+      attachment: false,
+      temperature: true,
+      toolcall: true,
+      reasoning: false,
+      input: {
+        text: true,
+        audio: false,
+        image: false,
+        video: false,
+        pdf: false,
+      },
+      output: {
+        text: true,
+        audio: false,
+        image: false,
+        video: false,
+        pdf: false,
+      },
+      interleaved: false,
+    },
+    cost: {
+      input: 0,
+      output: 0,
+      cache: {
+        read: 0,
+        write: 0,
+      },
+    },
+    limit: {
+      context: 128000,
+      output: 4096,
+    },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "2026-01-01",
+  }
+}
+
 const it = testEffect(
   SystemPrompt.layer.pipe(
     Layer.provide(
@@ -62,6 +115,30 @@ const it = testEffect(
 )
 
 describe("session.system", () => {
+  test("uses the English provider prompt by default", () => {
+    expect(SystemPrompt.provider(model("gpt-5"))[0]).toContain("You are")
+  })
+
+  test("uses the Chinese provider prompt when prompt_language is zh", () => {
+    expect(SystemPrompt.provider(model("gpt-5"), "zh")[0]).toContain("你是")
+  })
+
+  it.instance("localizes environment text when prompt_language is zh", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.environment(model("gpt-5"), "zh")
+      expect(output[0]).toContain("当前环境")
+    }),
+  )
+
+  it.effect("localizes skills text when prompt_language is zh", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(build, "zh")
+      expect(output).toContain("技能")
+    }),
+  )
+
   it.effect("skills output is sorted by name and stable across calls", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service

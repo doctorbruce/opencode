@@ -114,6 +114,7 @@ const live: Layer.Layer<
         plugin,
         flags,
         isWorkflow,
+        promptLanguage: cfg.prompt_language ?? "en",
       })
 
       // Wire up toolExecutor for DWS workflow models so that tool calls
