@@ -71,6 +71,7 @@ export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly defaultInfo: () => Effect.Effect<Info>
   readonly defaultAgent: () => Effect.Effect<string>
+  readonly reload: () => Effect.Effect<Info[]>
   readonly generate: (input: {
     description: string
     model?: { providerID: ProviderV2.ID; modelID: ModelV2.ID }
@@ -361,6 +362,10 @@ export const layer = Layer.effect(
         return yield* InstanceState.useEffect(state, (s) => s.get(agent))
       }),
       list: Effect.fn("Agent.list")(function* () {
+        return yield* InstanceState.useEffect(state, (s) => s.list())
+      }),
+      reload: Effect.fn("Agent.reload")(function* () {
+        yield* InstanceState.invalidate(state)
         return yield* InstanceState.useEffect(state, (s) => s.list())
       }),
       defaultInfo: Effect.fn("Agent.defaultInfo")(function* () {

@@ -24,6 +24,7 @@ import { Database } from "@opencode-ai/core/database/database"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Project } from "../../src/project/project"
 import { Session } from "../../src/session/session"
+import { SessionID } from "../../src/session/schema"
 import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/workspace"
 import {
   WorkspaceRoutingMiddleware,
@@ -231,6 +232,11 @@ const ProbeApi = HttpApi.make("workspace-routing-probe").add(
       HttpApiEndpoint.get("get", "/probe", { query: WorkspaceRoutingQuery, success: ProbeResult }),
       HttpApiEndpoint.patch("patch", "/probe", { query: WorkspaceRoutingQuery, success: Schema.Boolean }),
       HttpApiEndpoint.get("session", "/session", { query: WorkspaceRoutingQuery, success: ProbeResult }),
+      HttpApiEndpoint.post("sessionMessage", "/session/:sessionID/message", {
+        params: { sessionID: SessionID },
+        query: WorkspaceRoutingQuery,
+        success: ProbeResult,
+      }),
       HttpApiEndpoint.get("workspace", WorkspacePaths.list, {
         query: WorkspaceRoutingQuery,
         success: ProbeResult,
@@ -249,6 +255,7 @@ const probeHandlers = HttpApiBuilder.group(ProbeApi, "probe", (handlers) =>
     .handle("get", () => routeContextResponse)
     .handle("patch", () => Effect.succeed(false))
     .handle("session", () => routeContextResponse)
+    .handle("sessionMessage", () => routeContextResponse)
     .handle("workspace", () => routeContextResponse),
 )
 
@@ -259,6 +266,41 @@ const serveProbe = HttpApiBuilder.layer(ProbeApi).pipe(
   HttpRouter.serve,
   Layer.build,
 )
+
+const sessionInfo = (input: {
+  id: SessionID
+  projectID: Project.Info["id"]
+  directory: string
+  workspaceID?: WorkspaceV2.ID
+}): Session.Info => ({
+  id: input.id,
+  slug: "test-session",
+  projectID: input.projectID,
+  workspaceID: input.workspaceID,
+  directory: input.directory,
+  title: "Test session",
+  version: "test",
+  cost: 0,
+  tokens: {
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  },
+  time: {
+    created: 1,
+    updated: 1,
+  },
+})
+
+const serveProbeWithSession = (session: Session.Info) =>
+  HttpApiBuilder.layer(ProbeApi).pipe(
+    Layer.provide(probeHandlers),
+    Layer.provide(workspaceRoutingTestLayer),
+    Layer.provide(Layer.mock(Session.Service)({ get: () => Effect.succeed(session) })),
+    HttpRouter.serve,
+    Layer.build,
+  )
 
 describe("HttpApi workspace routing middleware", () => {
   it.live("proxies remote workspace HTTP requests through the selected workspace target", () =>
@@ -524,6 +566,29 @@ describe("HttpApi workspace routing middleware", () => {
       expect(yield* queryResponse.json).toEqual({ directory: queryDir, workspaceID: null })
       expect(headerResponse.status).toBe(200)
       expect(yield* headerResponse.json).toEqual({ directory: headerDir, workspaceID: null })
+    }),
+  )
+
+  it.live("prefers explicit directory hints for local session-scoped requests", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const project = yield* Project.use.fromDirectory(dir)
+      const staleDir = path.join(dir, "stale-session-dir")
+      const requestedDir = path.join(dir, "requested-session-dir")
+      const session = sessionInfo({
+        id: SessionID.make("ses_route_hint"),
+        projectID: project.project.id,
+        directory: staleDir,
+      })
+      yield* serveProbeWithSession(session)
+
+      const response = yield* HttpClientRequest.post(`/session/${session.id}/message`).pipe(
+        HttpClientRequest.setHeader("x-opencode-directory", requestedDir),
+        HttpClient.execute,
+      )
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({ directory: requestedDir, workspaceID: null })
     }),
   )
 

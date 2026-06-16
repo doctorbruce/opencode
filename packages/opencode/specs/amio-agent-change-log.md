@@ -2,6 +2,14 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-06-16
+
+### Assistant workspace prompt routing
+
+- Added a config reload HTTP endpoint so Astron Cowork can reload generated assistant agents without disposing the sidecar instance.
+- Local session-scoped HTTP routing now prefers explicit `directory` query/header hints over the stored session directory when no remote workspace target is selected.
+- This keeps newly-created assistant prompts on the assistant workspace instance, allowing the generated `assistant-direct-*` agents to be resolved immediately.
+
 ## 2026-06-05
 
 ### Serve-only sidecar entry

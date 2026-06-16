@@ -1,3 +1,4 @@
+import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
 import { Provider } from "@/provider/provider"
 import * as InstanceState from "@/effect/instance-state"
@@ -8,6 +9,7 @@ import { markInstanceForDisposal } from "../lifecycle"
 
 export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers) =>
   Effect.gen(function* () {
+    const agentSvc = yield* Agent.Service
     const providerSvc = yield* Provider.Service
     const configSvc = yield* Config.Service
 
@@ -21,6 +23,12 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
       return ctx.payload
     })
 
+    const reload = Effect.fn("ConfigHttpApi.reload")(function* () {
+      yield* configSvc.reload()
+      yield* agentSvc.reload()
+      return true
+    })
+
     const providers = Effect.fn("ConfigHttpApi.providers")(function* () {
       const providers = yield* providerSvc.list()
       return {
@@ -29,6 +37,6 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
       }
     })
 
-    return handlers.handle("get", get).handle("update", update).handle("providers", providers)
+    return handlers.handle("get", get).handle("update", update).handle("reload", reload).handle("providers", providers)
   }),
 )

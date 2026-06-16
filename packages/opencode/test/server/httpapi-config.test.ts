@@ -65,6 +65,74 @@ describe("config HttpApi", () => {
   )
 
   it.live(
+    "reloads config and agents without disposing the instance",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+
+      const before = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/agent", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+
+      expect(before.status).toBe(200)
+      expect((yield* Effect.promise(() => before.json())).map((agent: { name: string }) => agent.name)).not.toContain(
+        "hot-agent",
+      )
+
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(tmp.path, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            formatter: false,
+            lsp: false,
+            agent: {
+              "hot-agent": {
+                description: "Agent added after instance load",
+                prompt: "You are loaded without disposing the instance.",
+              },
+            },
+          }),
+        ),
+      )
+
+      const reload = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/config/reload", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+
+      expect(reload.status).toBe(200)
+      expect(yield* Effect.promise(() => reload.json())).toBe(true)
+
+      const after = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/agent", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+
+      expect(after.status).toBe(200)
+      expect((yield* Effect.promise(() => after.json())).map((agent: { name: string }) => agent.name)).toContain(
+        "hot-agent",
+      )
+    }),
+  )
+
+  it.live(
     "serves config with active provider model status",
     Effect.gen(function* () {
       const tmp = yield* tmpdirEffect({

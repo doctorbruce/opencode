@@ -83,8 +83,8 @@ function selectedV2WorkspaceID(
   return workspaceID.value
 }
 
-function defaultDirectory(request: HttpServerRequest.HttpServerRequest, url: URL): string {
-  return url.searchParams.get("directory") || request.headers["x-opencode-directory"] || process.cwd()
+function requestedDirectory(request: HttpServerRequest.HttpServerRequest, url: URL): string | undefined {
+  return url.searchParams.get("directory") || request.headers["x-opencode-directory"]
 }
 
 function shouldStayOnControlPlane(request: HttpServerRequest.HttpServerRequest, url: URL): boolean {
@@ -179,7 +179,7 @@ function planRequest(
     }
 
     return RequestPlan.Local({
-      directory: session?.directory || defaultDirectory(request, url),
+      directory: requestedDirectory(request, url) || session?.directory || process.cwd(),
       workspaceID: envWorkspaceID ?? workspaceID,
     })
   })
@@ -219,7 +219,8 @@ function routeHttpApiWorkspace<E>(
 > {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    const sessionID = getWorkspaceRouteSessionID(requestURL(request))
+    const url = requestURL(request)
+    const sessionID = getWorkspaceRouteSessionID(url)
     const session = sessionID
       ? yield* Session.Service.use((svc) => svc.get(sessionID)).pipe(
           Effect.catchIf(
@@ -230,6 +231,25 @@ function routeHttpApiWorkspace<E>(
         )
       : undefined
     const plan = yield* planRequest(request, session)
+    yield* Effect.logInfo("workspace routing plan", {
+      method: request.method,
+      path: url.pathname,
+      sessionID: sessionID ?? undefined,
+      sessionDirectory: session?.directory,
+      requestedDirectory: requestedDirectory(request, url),
+      localDirectory: RequestPlan.$match(plan, {
+        InvalidWorkspace: () => undefined,
+        MissingWorkspace: () => undefined,
+        Remote: () => undefined,
+        Local: ({ directory }) => directory,
+      }),
+      plan: RequestPlan.$match(plan, {
+        InvalidWorkspace: () => "invalid-workspace",
+        MissingWorkspace: () => "missing-workspace",
+        Remote: () => "remote",
+        Local: () => "local",
+      }),
+    })
     return yield* routeWorkspace(client, effect, plan)
   })
 }
