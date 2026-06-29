@@ -2,6 +2,18 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-06-29
+
+### Upstream dev sync
+
+- Merged latest `upstream/dev` from the original opencode repository into the fork `dev` branch.
+- Preserved fork-specific permission display metadata while adapting it to upstream's new `@opencode-ai/schema` package split.
+- Preserved the sidecar behavior that does not auto-download ripgrep; runtime still requires `rg` on PATH or in the configured bin directory.
+- Preserved Chinese prompt routing while adopting upstream MCP instruction injection and max-step prompt relocation.
+- Regenerated the JavaScript SDK after resolving OpenAPI/schema merge conflicts.
+- Relaxed the slow Windows shell-queue regression timeout after verifying the queued loop callers still coalesce to one LLM request.
+- Materialized the app and enterprise custom-elements declarations so Windows checkouts do not typecheck upstream symlink targets as TypeScript source.
+
 ## 2026-06-16
 
 ### Assistant workspace prompt routing

@@ -1,6 +1,6 @@
 import path from "path"
 import { Context, Effect, Layer } from "effect"
-import { LayerNode } from "../effect/layer-node"
+import { makeGlobalNode } from "../effect/app-node"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
 import { which } from "../util/which"
@@ -37,5 +37,9 @@ export namespace RipgrepBinary {
 
   export const defaultLayer = layer.pipe(Layer.provide(FSUtil.defaultLayer))
 
-  export const node = LayerNode.make(layer, [FSUtil.node])
+  export const node = makeGlobalNode({
+    service: Service,
+    layer: layer,
+    deps: [FSUtil.node],
+  })
 }
