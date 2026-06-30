@@ -9,6 +9,13 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Added `messageId` and `partId` to opencode's ACP `tool_call` and `tool_call_update` projections so downstream chat renderers can attach tool cards to the originating assistant message instead of inferring from the latest assistant bubble.
 - Added regression coverage for the tool-first shell update path.
 
+### Bundled external tool plugin runtime
+
+- Added an amio-agent runtime fallback for external tool plugins that import `@opencode-ai/plugin` from user config directories without a local `node_modules`.
+- The fallback bundles the external plugin entry with an opencode-provided plugin API shim instead of requiring Astron Cowork to copy an `opencode-runtime-template` dependency tree into each user profile.
+- Added standalone binary regression coverage that loads an external tool plugin from an isolated directory with no local dependencies.
+- Added standalone binary regression coverage for bundled provider dependencies such as `@ai-sdk/openai-compatible`, confirming they load without a user-profile dependency template.
+
 ## 2026-06-29
 
 ### Upstream dev sync
