@@ -250,6 +250,7 @@ export class Subscription {
           sessionId,
           update: {
             sessionUpdate: "tool_call_update",
+            ...this.toolMessageIdentity(part),
             ...completedToolUpdate({
               toolCallId: part.callID,
               toolName: part.tool,
@@ -266,6 +267,7 @@ export class Subscription {
           sessionId,
           update: {
             sessionUpdate: "tool_call_update",
+            ...this.toolMessageIdentity(part),
             ...errorToolUpdate({
               toolCallId: part.callID,
               toolName: part.tool,
@@ -288,6 +290,7 @@ export class Subscription {
           sessionId,
           update: {
             sessionUpdate: "tool_call_update",
+            ...this.toolMessageIdentity(part),
             ...duplicateRunningToolUpdate({
               toolCallId: part.callID,
               toolName: part.tool,
@@ -305,6 +308,7 @@ export class Subscription {
       sessionId,
       update: {
         sessionUpdate: "tool_call_update",
+        ...this.toolMessageIdentity(part),
         ...runningToolUpdate({
           toolCallId: part.callID,
           toolName: part.tool,
@@ -323,6 +327,7 @@ export class Subscription {
       sessionId,
       update: {
         sessionUpdate: "tool_call",
+        ...this.toolMessageIdentity(part),
         ...pendingToolCall({
           toolCallId: part.callID,
           toolName: part.tool,
@@ -331,6 +336,13 @@ export class Subscription {
         }),
       },
     })
+  }
+
+  private toolMessageIdentity(part: ToolPart) {
+    return {
+      messageId: part.messageID,
+      partId: part.id,
+    }
   }
 
   private clearTool(toolCallId: string) {

@@ -2,6 +2,13 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-06-30
+
+### ACP tool update message identity
+
+- Added `messageId` and `partId` to opencode's ACP `tool_call` and `tool_call_update` projections so downstream chat renderers can attach tool cards to the originating assistant message instead of inferring from the latest assistant bubble.
+- Added regression coverage for the tool-first shell update path.
+
 ## 2026-06-29
 
 ### Upstream dev sync

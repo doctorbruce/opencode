@@ -529,13 +529,20 @@ describe("acp event routing", () => {
     ])
     expect(harness.updates[0]?.update).toMatchObject({
       status: "pending",
+      messageId: "msg_call_1",
+      partId: "part_call_1",
       toolCallId: "call_1",
       title: "printf hello",
       kind: "execute",
       locations: [{ path: "/workspace" }],
       rawInput: { cmd: "printf hello", cwd: "/workspace" },
     })
-    expect(harness.updates[1]?.update).toMatchObject({ status: "in_progress", toolCallId: "call_1" })
+    expect(harness.updates[1]?.update).toMatchObject({
+      status: "in_progress",
+      messageId: "msg_call_1",
+      partId: "part_call_1",
+      toolCallId: "call_1",
+    })
   })
 
   it("includes available input in the synthetic pending tool call", async () => {
