@@ -2,6 +2,15 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-07-01
+
+### Cowork compaction controls
+
+- Added `compaction.threshold_tokens` so Astron Cowork can set an explicit proactive auto-compaction trigger in tokens instead of relying only on model context limits.
+- Kept `compaction.auto: false` as the switch that disables automatic compaction, including provider overflow recovery; `threshold_tokens` only controls the proactive threshold while auto-compaction remains enabled.
+- Preserved v1-to-v2 config migration so generated Cowork config keeps the threshold in normalized config entries.
+- Localized the synthetic auto-compaction continue prompt to Chinese for Astron Cowork sessions.
+
 ## 2026-06-30
 
 ### ACP tool update message identity
@@ -202,3 +211,8 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Preserved `prompt_language` routing for provider prompts, environment context, skills, reminders, structured output, and max-step prompts while adopting upstream core reference guidance.
 - Removed the new upstream ripgrep auto-download fallback; the runtime now uses `rg` from PATH or the local opencode bin directory and fails clearly if it is missing.
 - Regenerated the JavaScript SDK v2 output after the merge so prompt lifecycle events, permission display metadata, session archive nullability, and upstream API additions stay in sync.
+
+### ACP context usage
+
+- Changed ACP `usage_update.used` to report the latest assistant message's total context tokens, preferring `tokens.total` and otherwise summing input, output, reasoning, and cache tokens.
+- This aligns Astron context-window display with Codex-style current-window usage instead of reporting only non-cached input plus cache read tokens.

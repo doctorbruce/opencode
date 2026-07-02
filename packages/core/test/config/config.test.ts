@@ -543,7 +543,13 @@ describe("Config", () => {
                     },
                   },
                 },
-                compaction: { auto: true, tail_turns: 3, preserve_recent_tokens: 2000, reserved: 10000 },
+                compaction: {
+                  auto: true,
+                  tail_turns: 3,
+                  preserve_recent_tokens: 2000,
+                  reserved: 10000,
+                  threshold_tokens: 64000,
+                },
                 experimental: { mcp_timeout: 5000 },
                 mcp: {
                   local: { type: "local", command: ["node", "server.js"], enabled: false, timeout: 10000 },
@@ -627,6 +633,7 @@ describe("Config", () => {
               prune: undefined,
               keep: { tokens: 2000 },
               buffer: 10000,
+              threshold_tokens: 64000,
             })
             expect(documents[0]?.info.mcp).toMatchObject({
               timeout: { request: 5000 },

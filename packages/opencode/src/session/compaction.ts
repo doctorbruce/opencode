@@ -482,7 +482,7 @@ export const layer = Layer.effect(
               (input.overflow
                 ? "The previous request exceeded the provider's size limit due to large media attachments. The conversation was compacted and media files were removed from context. If the user was asking about attached images or files, explain that the attachments were too large to process and suggest they try again with smaller or fewer files.\n\n"
                 : "") +
-              "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed."
+              "如果你还有下一步操作，请继续；如果你不确定如何继续，请停止并向用户请求澄清。"
             yield* session.updatePart({
               id: PartID.ascending(),
               messageID: continueMsg.id,

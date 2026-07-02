@@ -1603,7 +1603,7 @@ describe("session.message-v2.latest", () => {
       {
         ...basePart(CONTINUE_USER, "p1"),
         type: "text",
-        text: "Continue if you have next steps...",
+        text: "如果你还有下一步操作，请继续...",
         synthetic: true,
         metadata: { compaction_continue: true },
       },

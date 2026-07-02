@@ -408,6 +408,24 @@ describe("session.compaction.isOverflow", () => {
   )
 
   it.live(
+    "returns true when token count reaches configured threshold",
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const compact = yield* SessionCompaction.Service
+          const model = createModel({ context: 1_000_000, output: 32_000 })
+          const tokens = { input: 60_000, output: 3_000, reasoning: 0, cache: { read: 1_000, write: 0 } }
+          expect(yield* compact.isOverflow({ tokens, model })).toBe(true)
+        }),
+      {
+        config: {
+          compaction: { threshold_tokens: 64_000 },
+        },
+      },
+    ),
+  )
+
+  it.live(
     "includes cache.read in token count",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -935,7 +953,7 @@ describe("session.compaction.process", () => {
         metadata: { compaction_continue: true },
       })
       if (last?.parts[0]?.type === "text") {
-        expect(last.parts[0].text).toContain("Continue if you have next steps")
+        expect(last.parts[0].text).toContain("如果你还有下一步操作，请继续")
       }
     }),
   )
@@ -1132,7 +1150,7 @@ describe("session.compaction.process", () => {
           (msg) =>
             msg.info.role === "user" &&
             msg.parts.some(
-              (part) => part.type === "text" && part.synthetic && part.text.includes("Continue if you have next steps"),
+              (part) => part.type === "text" && part.synthetic && part.text.includes("如果你还有下一步操作，请继续"),
             ),
         ),
       ).toBe(false)

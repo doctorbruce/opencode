@@ -219,7 +219,7 @@ describe("acp usage", () => {
           sessionId: "ses_1",
           update: {
             sessionUpdate: "usage_update",
-            used: 15,
+            used: 35,
             size: 128_000,
             cost: { amount: 3, currency: "USD" },
           },
