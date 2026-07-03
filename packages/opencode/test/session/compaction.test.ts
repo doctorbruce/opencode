@@ -191,6 +191,7 @@ function createCompactionMarker(sessionID: SessionID) {
         type: "compaction",
         auto: false,
       })
+      return msg
     }),
   )
 }
@@ -875,10 +876,18 @@ describe("session.compaction.process", () => {
       const msgs = yield* ssn.messages({ sessionID: session.id })
       const done = yield* Deferred.make<void, Error>()
       const seen: string[] = []
+      const started: Array<typeof SessionCompaction.Event.Started.data.Type> = []
+      const compacted: Array<typeof SessionCompaction.Event.Compacted.data.Type> = []
       const unsub = yield* events.listen((evt) => {
         seen.push(evt.type)
+        if (evt.type === SessionCompaction.Event.Started.type) {
+          started.push(evt.data as typeof SessionCompaction.Event.Started.data.Type)
+          return Effect.void
+        }
         if (evt.type !== SessionCompaction.Event.Compacted.type) return Effect.void
-        if ((evt.data as typeof SessionCompaction.Event.Compacted.data.Type).sessionID !== session.id)
+        const data = evt.data as typeof SessionCompaction.Event.Compacted.data.Type
+        compacted.push(data)
+        if (data.sessionID !== session.id)
           return Effect.void
         Deferred.doneUnsafe(done, Effect.void)
         return Effect.void
@@ -895,7 +904,70 @@ describe("session.compaction.process", () => {
       yield* Deferred.await(done).pipe(Effect.timeout("500 millis"))
       expect(result).toBe("continue")
       expect(seen).toContain(SessionCompaction.Event.Compacted.type)
+      expect(seen.indexOf("session.compaction.started")).toBeGreaterThanOrEqual(0)
+      expect(seen.indexOf("session.compaction.started")).toBeLessThan(seen.indexOf(SessionCompaction.Event.Compacted.type))
+      expect(started).toEqual([
+        {
+          sessionID: session.id,
+          messageID: expect.any(String),
+          afterMessageID: msg.id,
+          reason: "manual",
+        },
+      ])
+      expect(compacted).toEqual([
+        {
+          sessionID: session.id,
+          messageID: expect.any(String),
+          afterMessageID: msg.id,
+          reason: "manual",
+        },
+      ])
       expect(seen.filter((type) => type.startsWith("session.next."))).toEqual([])
+    }),
+  )
+
+  it.instance(
+    "anchors compacted event using the raw transcript when filtered context only has compaction messages",
+    Effect.gen(function* () {
+      const events = yield* EventV2Bridge.Service
+      const test = yield* TestInstance
+      const session = yield* SessionNs.use.create({})
+      const user = yield* createUserMessage(session.id, "visible user")
+      const reply = yield* createAssistantMessage(session.id, user.id, test.directory)
+      const previous = yield* createCompactionMarker(session.id)
+      yield* createSummaryAssistantMessage(session.id, previous.id, test.directory, "previous summary")
+      const current = yield* createCompactionMarker(session.id)
+      const msgs = MessageV2.filterCompacted(yield* MessageV2.stream(session.id))
+      const compacted: Array<typeof SessionCompaction.Event.Compacted.data.Type> = []
+      const done = yield* Deferred.make<void, Error>()
+      const unsub = yield* events.listen((evt) => {
+        if (evt.type !== SessionCompaction.Event.Compacted.type) return Effect.void
+        const data = evt.data as typeof SessionCompaction.Event.Compacted.data.Type
+        compacted.push(data)
+        if (data.sessionID === session.id) Deferred.doneUnsafe(done, Effect.void)
+        return Effect.void
+      })
+      yield* Effect.addFinalizer(() => unsub)
+
+      expect(msgs.map((msg) => msg.info.id)).not.toContain(reply.id)
+
+      const result = yield* SessionCompaction.use.process({
+        parentID: current.id,
+        messages: msgs,
+        sessionID: session.id,
+        auto: false,
+      })
+
+      yield* Deferred.await(done).pipe(Effect.timeout("500 millis"))
+      expect(result).toBe("continue")
+      expect(compacted).toEqual([
+        {
+          sessionID: session.id,
+          messageID: expect.any(String),
+          afterMessageID: reply.id,
+          reason: "manual",
+        },
+      ])
     }),
   )
 
@@ -1390,6 +1462,27 @@ describe("session.compaction.process", () => {
 
         expect(summary?.info.role).toBe("assistant")
         expect(summary?.parts.some((part) => part.type === "tool")).toBe(false)
+      }).pipe(withCompaction({ llm: stub.layer }))
+    },
+    { git: true },
+  )
+
+  itCompaction.instance(
+    "disables tool choice while generating the summary",
+    () => {
+      const stub = llm()
+      let captured: LLM.StreamInput | undefined
+      stub.push(reply("summary", (input) => (captured = input)))
+
+      return Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const session = yield* ssn.create({})
+        const msg = yield* createUserMessage(session.id, "hello")
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        yield* SessionCompaction.use.process({ parentID: msg.id, messages: msgs, sessionID: session.id, auto: false })
+
+        expect(captured?.toolChoice).toBe("none")
+        expect(captured?.tools).toEqual({})
       }).pipe(withCompaction({ llm: stub.layer }))
     },
     { git: true },

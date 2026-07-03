@@ -29,6 +29,7 @@ type GlobalEventEnvelope = {
 type GlobalEventStream = {
   stream: AsyncIterable<GlobalEventEnvelope>
 }
+type EventMessageUpdated = Extract<Event, { type: "message.updated" }>
 
 export function start(input: { sdk: OpencodeClient; connection: Connection; session: ACPSession.Interface }) {
   const subscription = new Subscription(input)
@@ -38,6 +39,7 @@ export function start(input: { sdk: OpencodeClient; connection: Connection; sess
 
 export class Subscription {
   private readonly abort = new AbortController()
+  private readonly hiddenMessages = new Set<string>()
   private readonly shellSnapshots = new Map<string, string>()
   private readonly toolStarts = new Set<string>()
   private readonly permission: ACPPermission.Handler
@@ -70,6 +72,8 @@ export class Subscription {
       case "permission.asked":
         this.permission.handle(event)
         return
+      case "message.updated":
+        return this.handleMessageUpdated(event)
       case "message.part.updated":
         return this.handlePartUpdated(event)
       case "message.part.delta":
@@ -93,6 +97,7 @@ export class Subscription {
 
   private async replayContentPart(message: SessionMessageResponse, part: Part) {
     if (part.type !== "text" && part.type !== "file" && part.type !== "reasoning") return
+    if (isHiddenAssistantContent(message)) return
 
     const sessionUpdate =
       part.type === "reasoning"
@@ -128,6 +133,16 @@ export class Subscription {
     }
   }
 
+  private handleMessageUpdated(event: EventMessageUpdated) {
+    const info = event.properties.info
+    const key = messageMetadataKey(info.sessionID, info.id)
+    if (isHiddenAssistantInfo(info)) {
+      this.hiddenMessages.add(key)
+      return
+    }
+    this.hiddenMessages.delete(key)
+  }
+
   private async handlePartUpdated(event: EventMessagePartUpdated) {
     const part = event.properties.part
     const sessionId = part.sessionID || event.properties.sessionID
@@ -142,6 +157,7 @@ export class Subscription {
         partType: part.type,
         role: part.type === "reasoning" ? "assistant" : undefined,
         ignored: part.type === "text" ? part.ignored : undefined,
+        hidden: this.isHiddenMessage(session.id, part.messageID),
         toolCallId: part.type === "tool" ? part.callID : undefined,
         metadata: "metadata" in part ? part.metadata : undefined,
       }),
@@ -155,6 +171,7 @@ export class Subscription {
     const props = event.properties
     const session = await Effect.runPromise(this.input.session.tryGet(props.sessionID))
     if (!session) return
+    if (this.isHiddenMessage(session.id, props.messageID)) return
 
     const known = await Effect.runPromise(
       this.input.session.tryGetPartMetadata({
@@ -168,6 +185,7 @@ export class Subscription {
         ? known
         : await this.fetchPartMetadata(session.id, session.cwd, props.messageID, props.partID)
     if (metadata?.role !== "assistant") return
+    if (metadata.hidden) return
     if (metadata.partType === "text" && props.field === "text" && metadata.ignored !== true) {
       await this.input.connection.sessionUpdate({
         sessionId: session.id,
@@ -218,6 +236,8 @@ export class Subscription {
   }
 
   private async recordFetchedPart(sessionId: string, message: SessionMessageResponse, part: Part) {
+    const hidden = isHiddenAssistantContent(message)
+    if (hidden) this.hiddenMessages.add(messageMetadataKey(sessionId, message.info.id))
     return await Effect.runPromise(
       this.input.session.recordPartMetadata({
         sessionId,
@@ -226,6 +246,7 @@ export class Subscription {
         partType: part.type,
         role: message.info.role,
         ignored: part.type === "text" ? part.ignored : undefined,
+        hidden,
         toolCallId: part.type === "tool" ? part.callID : undefined,
         metadata: "metadata" in part ? part.metadata : undefined,
       }),
@@ -349,6 +370,25 @@ export class Subscription {
     this.toolStarts.delete(toolCallId)
     this.shellSnapshots.delete(toolCallId)
   }
+
+  private isHiddenMessage(sessionId: string, messageId: string) {
+    return this.hiddenMessages.has(messageMetadataKey(sessionId, messageId))
+  }
+}
+
+function isHiddenAssistantContent(message: SessionMessageResponse) {
+  return isHiddenAssistantInfo(message.info)
+}
+
+function isHiddenAssistantInfo(info: SessionMessageResponse["info"]) {
+  return (
+    info.role === "assistant" &&
+    (info.summary === true || info.mode === "compaction" || info.agent === "compaction")
+  )
+}
+
+function messageMetadataKey(sessionId: string, messageId: string) {
+  return `${sessionId}:${messageId}`
 }
 
 export * as ACPEvent from "./event"

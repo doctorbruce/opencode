@@ -126,6 +126,17 @@ function textDelta(sessionID: string, messageID: string, partID: string, delta: 
   }
 }
 
+function messageUpdated(message: SessionMessageResponse): Event {
+  return {
+    id: `evt_${message.info.sessionID}_${message.info.id}`,
+    type: "message.updated",
+    properties: {
+      sessionID: message.info.sessionID,
+      info: message.info,
+    },
+  }
+}
+
 function partUpdated(sessionID: string, messageID: string, partID: string, type: DeltaPartType): Event {
   return {
     id: `evt_${sessionID}_${messageID}_${partID}`,
@@ -166,7 +177,18 @@ function toolUpdated(part: ToolPart): Event {
   }
 }
 
-function assistantMessage(sessionID: string, messageID: string, partID: string, type: DeltaPartType) {
+function assistantMessage(
+  sessionID: string,
+  messageID: string,
+  partID: string,
+  type: DeltaPartType,
+  options: {
+    readonly agent?: string
+    readonly mode?: string
+    readonly summary?: boolean
+    readonly text?: string
+  } = {},
+) {
   return {
     info: {
       id: messageID,
@@ -176,8 +198,9 @@ function assistantMessage(sessionID: string, messageID: string, partID: string, 
       parentID: "msg_parent",
       modelID: "model",
       providerID: "provider",
-      mode: "build",
-      agent: "build",
+      mode: options.mode ?? "build",
+      agent: options.agent ?? "build",
+      summary: options.summary,
       path: { cwd: "/workspace", root: "/workspace" },
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -189,14 +212,14 @@ function assistantMessage(sessionID: string, messageID: string, partID: string, 
             sessionID,
             messageID,
             type: "text",
-            text: "",
+            text: options.text ?? "",
           }
         : {
             id: partID,
             sessionID,
             messageID,
             type: "reasoning",
-            text: "",
+            text: options.text ?? "",
             time: { start: Date.now() },
           },
     ],
@@ -420,6 +443,56 @@ describe("acp event routing", () => {
 
     expect(harness.calls.message).toBe(1)
     expect(harness.updates).toHaveLength(2)
+  })
+
+  it("suppresses replayed compaction summary content", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_compact", cwd: "/workspace" }))
+
+    await harness.subscription.replayMessage(
+      assistantMessage("ses_compact", "msg_summary", "part_summary", "text", {
+        agent: "compaction",
+        mode: "compaction",
+        summary: true,
+        text: "压缩摘要内容",
+      }),
+    )
+
+    expect(harness.updates).toHaveLength(0)
+  })
+
+  it("suppresses live compaction summary deltas after fetching message metadata", async () => {
+    const harness = createHarness({
+      msg_summary: assistantMessage("ses_compact", "msg_summary", "part_summary", "text", {
+        agent: "compaction",
+        mode: "compaction",
+        summary: true,
+      }),
+    })
+    await Effect.runPromise(harness.session.create({ id: "ses_compact", cwd: "/workspace" }))
+
+    await harness.subscription.handle(partUpdated("ses_compact", "msg_summary", "part_summary", "text"))
+    await harness.subscription.handle(textDelta("ses_compact", "msg_summary", "part_summary", "压缩摘要内容"))
+
+    expect(harness.calls.message).toBe(1)
+    expect(harness.updates).toHaveLength(0)
+  })
+
+  it("suppresses compaction reasoning deltas after seeing the hidden message", async () => {
+    const harness = createHarness()
+    const message = assistantMessage("ses_compact", "msg_summary", "part_reasoning", "reasoning", {
+      agent: "compaction",
+      mode: "compaction",
+      summary: true,
+    })
+    await Effect.runPromise(harness.session.create({ id: "ses_compact", cwd: "/workspace" }))
+
+    await harness.subscription.handle(messageUpdated(message))
+    await harness.subscription.handle(partUpdated("ses_compact", "msg_summary", "part_reasoning", "reasoning"))
+    await harness.subscription.handle(textDelta("ses_compact", "msg_summary", "part_reasoning", "thinking"))
+
+    expect(harness.calls.message).toBe(0)
+    expect(harness.updates).toHaveLength(0)
   })
 
   it("replays loaded session messages sequentially and continues after update failures", async () => {

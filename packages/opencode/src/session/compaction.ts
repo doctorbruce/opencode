@@ -12,7 +12,7 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/storage"
 
-import { Effect, Layer, Context } from "effect"
+import { Effect, Layer, Context, Option } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow, usable } from "./overflow"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
@@ -75,6 +75,12 @@ function completedCompactions(messages: SessionV1.WithParts[]) {
     if (userIndex === undefined) return []
     return [{ userIndex, assistantIndex, summary: summaryText(msg) }]
   })
+}
+
+function isCompactionNoticeAnchorMessage(message: SessionV1.WithParts) {
+  if (message.info.role === "user") return !message.parts.some((part) => part.type === "compaction")
+  if (message.info.role !== "assistant") return false
+  return message.info.summary !== true && message.info.mode !== "compaction" && message.info.agent !== "compaction"
 }
 
 function preserveRecentBudget(input: { cfg: ConfigV1.Info; model: Provider.Model }) {
@@ -331,6 +337,11 @@ export const layer = Layer.effect(
         : yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID).pipe(Effect.orDie)
       const cfg = yield* config.get()
       const history = compactionPart && messages.at(-1)?.info.id === input.parentID ? messages.slice(0, -1) : messages
+      const anchorMessageID = Option.getOrUndefined(
+        yield* session
+          .findMessage(input.sessionID, isCompactionNoticeAnchorMessage)
+          .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(Option.none()))),
+      )?.info.id
       const prior = completedCompactions(history)
       const hidden = new Set(prior.flatMap((item) => [item.userIndex, item.assistantIndex]))
       const previousSummary = prior.at(-1)?.summary
@@ -380,6 +391,12 @@ export const layer = Layer.effect(
         },
       }
       yield* session.updateMessage(msg)
+      yield* events.publish(Event.Started, {
+        sessionID: input.sessionID,
+        messageID: msg.id,
+        ...(anchorMessageID ? { afterMessageID: anchorMessageID } : {}),
+        reason: input.auto ? "auto" : "manual",
+      })
       const processor = yield* processors.create({
         assistantMessage: msg,
         sessionID: input.sessionID,
@@ -390,6 +407,7 @@ export const layer = Layer.effect(
         agent,
         sessionID: input.sessionID,
         tools: {},
+        toolChoice: "none",
         system: [],
         messages: [
           ...modelMessages,
@@ -505,7 +523,12 @@ export const layer = Layer.effect(
 
       if (processor.message.error) return "stop"
       if (result === "continue") {
-        yield* events.publish(Event.Compacted, { sessionID: input.sessionID })
+        yield* events.publish(Event.Compacted, {
+          sessionID: input.sessionID,
+          messageID: msg.id,
+          ...(anchorMessageID ? { afterMessageID: anchorMessageID } : {}),
+          reason: input.auto ? "auto" : "manual",
+        })
       }
       return result
     })

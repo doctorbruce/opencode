@@ -2,6 +2,13 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-07-02
+
+### Compaction summary tool suppression
+
+- Forced compaction summary requests to use `toolChoice: "none"` so provider-side or gateway-side tools such as `webfetch` cannot interrupt summary generation.
+- Derived compaction status `afterMessageID` from the raw transcript instead of the filtered model context, keeping the progress notice anchored after the visible transcript tail even after repeated manual compactions.
+
 ## 2026-07-01
 
 ### Cowork compaction controls
@@ -10,6 +17,10 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Kept `compaction.auto: false` as the switch that disables automatic compaction, including provider overflow recovery; `threshold_tokens` only controls the proactive threshold while auto-compaction remains enabled.
 - Preserved v1-to-v2 config migration so generated Cowork config keeps the threshold in normalized config entries.
 - Localized the synthetic auto-compaction continue prompt to Chinese for Astron Cowork sessions.
+- Suppressed compaction summary assistant content in the ACP projection so Cowork can show status-only compaction progress while keeping the stored summary available for future turns.
+- Added explicit `messageID` and `reason` metadata to `session.compacted` so Astron Cowork can finish manual compaction prompts without treating runtime idle as a fallback signal.
+- Added `session.compaction.started` with explicit compaction summary message metadata so Cowork can hide summary usage and content before any summary parts finish.
+- Added `afterMessageID` to compaction status events so Cowork can place compression progress after the visible transcript tail without inferring from client-side timing.
 
 ## 2026-06-30
 

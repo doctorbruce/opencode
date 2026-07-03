@@ -16,6 +16,7 @@ export type KnownMessagePartMetadata = {
   partType?: Part["type"]
   role?: Message["role"]
   ignored?: boolean
+  hidden?: boolean
   toolCallId?: string
   metadata?: unknown
 }
@@ -48,6 +49,7 @@ export type RecordPartMetadataInput = {
   partType?: Part["type"]
   role?: Message["role"]
   ignored?: boolean
+  hidden?: boolean
   toolCallId?: string
   metadata?: unknown
 }
@@ -156,6 +158,7 @@ export const layer = Layer.effect(
         partType: input.partType,
         role: input.role,
         ignored: input.ignored,
+        hidden: input.hidden,
         toolCallId: input.toolCallId,
         metadata: input.metadata,
       }

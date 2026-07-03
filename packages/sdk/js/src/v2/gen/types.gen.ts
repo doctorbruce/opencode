@@ -84,6 +84,7 @@ export type Event =
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
+  | EventSessionCompactionStarted
   | EventSessionCompacted
   | EventVcsBranchUpdated
   | EventWorkspaceReady
@@ -1550,9 +1551,22 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "session.compaction.started"
+        properties: {
+          sessionID: string
+          messageID: string
+          afterMessageID?: string
+          reason: "manual" | "auto"
+        }
+      }
+    | {
+        id: string
         type: "session.compacted"
         properties: {
           sessionID: string
+          messageID: string
+          afterMessageID?: string
+          reason: "manual" | "auto"
         }
       }
     | {
@@ -2943,6 +2957,7 @@ export type V2Event =
   | QuestionAsked
   | QuestionReplied2
   | QuestionRejected2
+  | SessionCompactionStarted
   | SessionCompacted
   | VcsBranchUpdated
   | WorkspaceReady
@@ -5962,6 +5977,26 @@ export type QuestionAsked = {
   }
 }
 
+export type SessionCompactionStarted = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.compaction.started"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    messageID: string
+    afterMessageID?: string
+    reason: "manual" | "auto"
+  }
+}
+
 export type SessionCompacted = {
   id: string
   metadata?: {
@@ -5976,6 +6011,9 @@ export type SessionCompacted = {
   location?: LocationRef
   data: {
     sessionID: string
+    messageID: string
+    afterMessageID?: string
+    reason: "manual" | "auto"
   }
 }
 
@@ -6991,11 +7029,25 @@ export type EventQuestionRejected = {
   }
 }
 
+export type EventSessionCompactionStarted = {
+  id: string
+  type: "session.compaction.started"
+  properties: {
+    sessionID: string
+    messageID: string
+    afterMessageID?: string
+    reason: "manual" | "auto"
+  }
+}
+
 export type EventSessionCompacted = {
   id: string
   type: "session.compacted"
   properties: {
     sessionID: string
+    messageID: string
+    afterMessageID?: string
+    reason: "manual" | "auto"
   }
 }
 
