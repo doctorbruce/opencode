@@ -122,8 +122,10 @@ export const TaskTool = Tool.define(
         ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
       const parent = yield* sessions.get(ctx.sessionID)
+      const parentAgent = yield* agent.get(parent.agent ?? ctx.agent)
       const childPermission = deriveSubagentSessionPermission({
         parentSessionPermission: parent.permission ?? [],
+        parentAgentPermission: parentAgent?.permission ?? [],
         subagent: next,
       })
       const childToolDenies = [

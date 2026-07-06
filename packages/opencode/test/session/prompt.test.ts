@@ -1151,6 +1151,41 @@ it.instance("subtask child inherits parent session external_directory allow", ()
     expect(Permission.evaluate("external_directory", "/tmp/allowed/file", rules).action).toBe("allow")
     expect(Permission.evaluate("task", "anything", rules).action).toBe("deny")
   }),
+  { timeout: 15000 },
+)
+
+it.instance("subtask child inherits parent agent external_directory allow", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      agent: {
+        build: {
+          permission: {
+            external_directory: "allow",
+          },
+        },
+      },
+    }))
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Parent", agent: "build" })
+    yield* llm.text("done")
+    const msg = yield* user(chat.id, "hello")
+    yield* addSubtask(chat.id, msg.id)
+
+    yield* prompt.loop({ sessionID: chat.id })
+
+    const kids = yield* sessions.children(chat.id)
+    expect(kids).toHaveLength(1)
+    const child = kids[0]!
+    const rules = child.permission ?? []
+    expect(rules).toEqual(
+      expect.arrayContaining([{ permission: "external_directory", pattern: "*", action: "allow" }]),
+    )
+    expect(Permission.evaluate("external_directory", "E:/Projects/astron-cowork/*", rules).action).toBe("allow")
+    expect(Permission.evaluate("task", "anything", rules).action).toBe("deny")
+  }),
+  { timeout: 15000 },
 )
 
 noLLMServer.instance("prompt tools replace previous prompt tool rules", () =>

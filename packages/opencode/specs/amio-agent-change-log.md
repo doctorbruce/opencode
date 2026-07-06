@@ -2,6 +2,13 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-07-06
+
+### Subagent permission inheritance
+
+- Task-spawned subagents now inherit the parent agent's `external_directory` rules, so Astron full-access assistants do not re-prompt when a subagent reads the same external workspace.
+- Kept parent session deny rules as hard child-session ceilings and preserved subagent-specific tool restrictions such as default `todowrite` and nested `task` denies.
+
 ## 2026-07-02
 
 ### Compaction summary tool suppression

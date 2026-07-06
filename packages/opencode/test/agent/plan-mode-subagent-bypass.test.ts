@@ -41,6 +41,7 @@ it.instance("subagent permissions take precedence over parent agent restrictions
 
     const subagentSessionPermission = deriveSubagentSessionPermission({
       parentSessionPermission,
+      parentAgentPermission: planAgent!.permission,
       subagent: generalAgent!,
     })
 
@@ -155,5 +156,36 @@ it.effect("subagent inherits parent session deny rules as hard runtime ceilings"
     )
 
     expect(Permission.evaluate("bash", "git status", effective).action).toBe("deny")
+  }),
+)
+
+it.effect("subagent inherits parent agent external directory permission", () =>
+  Effect.sync(() => {
+    const parent = testAgent({
+      name: "assistant-direct",
+      mode: "all",
+      permission: {
+        external_directory: "allow",
+      },
+    })
+    const explore = testAgent({
+      name: "explore",
+      mode: "subagent",
+      permission: {
+        "*": "deny",
+        read: "allow",
+        external_directory: "ask",
+      },
+    })
+    const effective = Permission.merge(
+      explore.permission,
+      deriveSubagentSessionPermission({
+        parentSessionPermission: [],
+        parentAgentPermission: parent.permission,
+        subagent: explore,
+      }),
+    )
+
+    expect(Permission.evaluate("external_directory", "E:/Projects/astron-cowork/*", effective).action).toBe("allow")
   }),
 )
