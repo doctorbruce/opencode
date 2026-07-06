@@ -1188,6 +1188,27 @@ it.instance("subtask child inherits parent agent external_directory allow", () =
   { timeout: 15000 },
 )
 
+it.instance("subtask part records child session relation", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Parent" })
+    yield* llm.text("done")
+    const msg = yield* user(chat.id, "hello")
+    yield* addSubtask(chat.id, msg.id)
+
+    yield* prompt.loop({ sessionID: chat.id })
+
+    const kids = yield* sessions.children(chat.id)
+    expect(kids).toHaveLength(1)
+    const parent = (yield* MessageV2.filterCompactedEffect(chat.id)).find((item) => item.info.id === msg.id)
+    const subtask = parent?.parts.find((part): part is SessionV1.SubtaskPart => part.type === "subtask")
+    expect(subtask?.childSessionID).toBe(kids[0]?.id)
+  }),
+  { timeout: 15000 },
+)
+
 noLLMServer.instance("prompt tools replace previous prompt tool rules", () =>
   Effect.gen(function* () {
     const prompt = yield* SessionPrompt.Service

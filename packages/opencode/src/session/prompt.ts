@@ -388,6 +388,18 @@ export const layer = Layer.effect(
         sessionID,
         messageID: assistantMessage.id,
       }))
+      const childSessionID =
+        typeof result?.metadata?.sessionId === "string"
+          ? SessionID.make(result.metadata.sessionId)
+          : part.state.status === "running" && typeof part.state.metadata?.sessionId === "string"
+            ? SessionID.make(part.state.metadata.sessionId)
+            : undefined
+      if (childSessionID) {
+        yield* sessions.updatePart({
+          ...task,
+          childSessionID,
+        })
+      }
 
       yield* plugin.trigger(
         "tool.execute.after",

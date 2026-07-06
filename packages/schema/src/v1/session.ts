@@ -207,6 +207,7 @@ export const SubtaskPart = Schema.Struct({
   prompt: Schema.String,
   description: Schema.String,
   agent: Schema.String,
+  childSessionID: Schema.optional(SessionID),
   model: Schema.optional(
     Schema.Struct({
       providerID: Provider.ID,

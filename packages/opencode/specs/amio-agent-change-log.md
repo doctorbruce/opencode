@@ -4,6 +4,11 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 
 ## 2026-07-06
 
+### Runtime fact child session relation
+
+- Added `childSessionID` to stored subtask parts after Task-spawned subagents create or reuse a child session.
+- This lets Astron consume the parent user message to child session relation from opencode history instead of inferring it from tool metadata or a separate children lookup.
+
 ### Subagent permission inheritance
 
 - Task-spawned subagents now inherit the parent agent's `external_directory` rules, so Astron full-access assistants do not re-prompt when a subagent reads the same external workspace.
