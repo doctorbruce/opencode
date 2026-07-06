@@ -10,6 +10,13 @@ const EventData = Schema.Struct({
   id: Schema.optional(Schema.String),
   type: Schema.String,
   properties: Schema.Record(Schema.String, Schema.Any),
+  sequence: Schema.optional(
+    Schema.Struct({
+      aggregateID: Schema.String,
+      seq: Schema.Number,
+      version: Schema.Number,
+    }),
+  ),
 })
 
 const readEvent = (reader: Queue.Dequeue<Uint8Array>) =>
@@ -40,6 +47,7 @@ afterEach(async () => {
 })
 
 const it = testEffect(httpApiLayer)
+const eventTestTimeout = 10_000
 
 describe("event HttpApi", () => {
   it.instance(
@@ -57,6 +65,7 @@ describe("event HttpApi", () => {
         expect(yield* readEvent(reader)).toMatchObject({ type: "server.connected", properties: {} })
       }),
     { git: true, config: { formatter: false, lsp: false } },
+    eventTestTimeout,
   )
 
   it.instance(
@@ -75,6 +84,7 @@ describe("event HttpApi", () => {
         expect(status).toBe("open")
       }),
     { git: true, config: { formatter: false, lsp: false } },
+    eventTestTimeout,
   )
 
   it.instance(
@@ -90,5 +100,31 @@ describe("event HttpApi", () => {
         expect(yield* readEvent(reader)).toMatchObject({ type: "session.created" })
       }),
     { git: true, config: { formatter: false, lsp: false } },
+    eventTestTimeout,
+  )
+
+  it.instance(
+    "includes durable sequence metadata on durable events",
+    () =>
+      Effect.gen(function* () {
+        const { directory } = yield* TestInstance
+        const { reader } = yield* openEventStream(directory)
+        expect(yield* readEvent(reader)).toMatchObject({ type: "server.connected", properties: {} })
+
+        const created = yield* requestInDirectory("/session", directory, { method: "POST" })
+        expect(created.status).toBe(200)
+        const event = yield* readEvent(reader)
+        const sessionID = Schema.decodeUnknownSync(Schema.Struct({ sessionID: Schema.String }))(event.properties).sessionID
+        expect(event).toMatchObject({
+          type: "session.created",
+          sequence: {
+            aggregateID: sessionID,
+            seq: 0,
+            version: 1,
+          },
+        })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    eventTestTimeout,
   )
 })

@@ -4,6 +4,11 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 
 ## 2026-07-06
 
+### Runtime fact live event sequence
+
+- Added optional `sequence` metadata to durable events emitted by the legacy `/event` SSE stream while preserving the existing `id`, `type`, and `properties` payload shape.
+- Added `runtime-facts-astron-integration.md` so Astron adapter changes can consume opencode-provided runtime facts without reconstructing them downstream.
+
 ### Runtime fact child session relation
 
 - Added `childSessionID` to stored subtask parts after Task-spawned subagents create or reuse a child session.

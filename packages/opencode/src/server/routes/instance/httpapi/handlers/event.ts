@@ -9,6 +9,17 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { EventApi } from "../groups/event"
 
+type EventStreamData = {
+  readonly id: string
+  readonly type: string
+  readonly properties: unknown
+  readonly sequence?: {
+    readonly aggregateID: string
+    readonly seq: number
+    readonly version: number
+  }
+}
+
 function eventData(data: unknown): Sse.Event {
   return {
     _tag: "Event",
@@ -37,9 +48,22 @@ function eventResponse(events: EventV2.Interface) {
           event.location?.directory === instance.directory &&
           (event.location.workspaceID === undefined || event.location.workspaceID === workspaceID),
       ),
-      Stream.map((event) => ({ id: event.id, type: event.type, properties: event.data })),
+      Stream.map((event): EventStreamData => ({
+        id: event.id,
+        type: event.type,
+        properties: event.data,
+        ...(event.durable
+          ? {
+              sequence: {
+                aggregateID: event.durable.aggregateID,
+                seq: event.durable.seq,
+                version: event.durable.version,
+              },
+            }
+          : {}),
+      })),
     )
-    const disposed = Stream.callback<{ id: string; type: string; properties: unknown }>((queue) => {
+    const disposed = Stream.callback<EventStreamData>((queue) => {
       const listener = (event: {
         directory?: string
         payload: { id?: string; type?: string; properties?: unknown }
