@@ -133,6 +133,83 @@ describe("config HttpApi", () => {
   )
 
   it.live(
+    "reloads skill paths without disposing the instance",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+
+      const before = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/skill", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+
+      expect(before.status).toBe(200)
+      expect((yield* Effect.promise(() => before.json())).map((skill: { name: string }) => skill.name)).not.toContain(
+        "hot-skill",
+      )
+
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(tmp.path, "external-skills", "hot-skill", "SKILL.md"),
+          `---
+name: hot-skill
+description: Skill added after instance load.
+---
+
+# Hot Skill
+`,
+        ),
+      )
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(tmp.path, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            formatter: false,
+            lsp: false,
+            skills: {
+              paths: ["external-skills"],
+            },
+          }),
+        ),
+      )
+
+      const reload = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/config/reload", {
+            method: "POST",
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+
+      expect(reload.status).toBe(200)
+      expect(yield* Effect.promise(() => reload.json())).toBe(true)
+
+      const after = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/skill", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+
+      expect(after.status).toBe(200)
+      expect((yield* Effect.promise(() => after.json())).map((skill: { name: string }) => skill.name)).toContain(
+        "hot-skill",
+      )
+    }),
+  )
+
+  it.live(
     "serves config with active provider model status",
     Effect.gen(function* () {
       const tmp = yield* tmpdirEffect({

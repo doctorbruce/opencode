@@ -22,6 +22,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { buildPrompt } from "@opencode-ai/core/session/compaction"
 import { SessionCompactionEvent } from "@opencode-ai/schema/session-compaction-event"
+import type { ModelMessage } from "ai"
 
 export const Event = SessionCompactionEvent
 
@@ -57,6 +58,13 @@ function summaryText(message: SessionV1.WithParts) {
     .join("\n\n")
     .trim()
   return text || undefined
+}
+
+function estimateRequestTokens(value: unknown) {
+  const text = JSON.stringify(value)
+  const asciiChars = text.replace(/[^\x00-\x7F]/g, "").length
+  const nonAsciiChars = text.length - asciiChars
+  return Math.max(Token.estimate(text), Math.ceil(asciiChars / 4) + nonAsciiChars)
 }
 
 function completedCompactions(messages: SessionV1.WithParts[]) {
@@ -138,6 +146,11 @@ export interface Interface {
     tokens: SessionV1.Assistant["tokens"]
     model: Provider.Model
   }) => Effect.Effect<boolean>
+  readonly isPromptOverflow: (input: {
+    system: string[]
+    messages: ModelMessage[]
+    model: Provider.Model
+  }) => Effect.Effect<boolean>
   readonly prune: (input: { sessionID: SessionID }) => Effect.Effect<void>
   readonly process: (input: {
     parentID: MessageID
@@ -181,6 +194,31 @@ export const layer = Layer.effect(
         model: input.model,
         outputTokenMax: flags.outputTokenMax,
       })
+    })
+
+    const isPromptOverflow = Effect.fn("SessionCompaction.isPromptOverflow")(function* (input: {
+      system: string[]
+      messages: ModelMessage[]
+      model: Provider.Model
+    }) {
+      const cfg = yield* config.get()
+      const estimated = estimateRequestTokens({ system: input.system, messages: input.messages })
+      const result = overflow({
+        cfg,
+        tokens: { input: estimated, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        model: input.model,
+        outputTokenMax: flags.outputTokenMax,
+      })
+      if (result) {
+        yield* Effect.logInfo("prompt exceeds usable context; creating compaction before llm request", {
+          providerID: input.model.providerID,
+          modelID: input.model.id,
+          estimatedTokens: estimated,
+          usableTokens: usable({ cfg, model: input.model, outputTokenMax: flags.outputTokenMax }),
+          contextLimit: input.model.limit.context,
+        })
+      }
+      return result
     })
 
     const estimate = Effect.fn("SessionCompaction.estimate")(function* (input: {
@@ -560,6 +598,7 @@ export const layer = Layer.effect(
 
     return Service.of({
       isOverflow,
+      isPromptOverflow,
       prune,
       process: processCompaction,
       create,

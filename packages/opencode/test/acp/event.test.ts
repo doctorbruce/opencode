@@ -177,6 +177,30 @@ function toolUpdated(part: ToolPart): Event {
   }
 }
 
+function compactionStarted(sessionID: string, messageID: string): Event {
+  return {
+    id: `evt_${sessionID}_${messageID}_compaction_started`,
+    type: "session.compaction.started",
+    properties: {
+      sessionID,
+      messageID,
+      reason: "auto",
+    },
+  }
+}
+
+function compactionCompacted(sessionID: string, messageID: string): Event {
+  return {
+    id: `evt_${sessionID}_${messageID}_compacted`,
+    type: "session.compacted",
+    properties: {
+      sessionID,
+      messageID,
+      reason: "auto",
+    },
+  }
+}
+
 function assistantMessage(
   sessionID: string,
   messageID: string,
@@ -493,6 +517,37 @@ describe("acp event routing", () => {
 
     expect(harness.calls.message).toBe(0)
     expect(harness.updates).toHaveLength(0)
+  })
+
+  it("forwards compaction lifecycle as command status updates", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_compact", cwd: "/workspace" }))
+
+    await harness.subscription.handle(compactionStarted("ses_compact", "msg_summary"))
+    await harness.subscription.handle(compactionCompacted("ses_compact", "msg_summary"))
+
+    expect(harness.updates).toEqual([
+      expect.objectContaining({
+        sessionId: "ses_compact",
+        update: expect.objectContaining({
+          sessionUpdate: "command_status_update",
+          command: "compact",
+          status: "started",
+          noticeId: "command:compact:msg_summary",
+          message: "正在压缩会话",
+        }),
+      }),
+      expect.objectContaining({
+        sessionId: "ses_compact",
+        update: expect.objectContaining({
+          sessionUpdate: "command_status_update",
+          command: "compact",
+          status: "completed",
+          noticeId: "command:compact:msg_summary",
+          message: "压缩完成",
+        }),
+      }),
+    ])
   })
 
   it("replays loaded session messages sequentially and continues after update failures", async () => {

@@ -30,6 +30,8 @@ type GlobalEventStream = {
   stream: AsyncIterable<GlobalEventEnvelope>
 }
 type EventMessageUpdated = Extract<Event, { type: "message.updated" }>
+type EventSessionCompactionStarted = Extract<Event, { type: "session.compaction.started" }>
+type EventSessionCompacted = Extract<Event, { type: "session.compacted" }>
 
 export function start(input: { sdk: OpencodeClient; connection: Connection; session: ACPSession.Interface }) {
   const subscription = new Subscription(input)
@@ -78,6 +80,10 @@ export class Subscription {
         return this.handlePartUpdated(event)
       case "message.part.delta":
         return this.handlePartDelta(event)
+      case "session.compaction.started":
+        return this.handleCompactionStatus(event, "started", "正在压缩会话")
+      case "session.compacted":
+        return this.handleCompactionStatus(event, "completed", "压缩完成")
     }
   }
 
@@ -214,6 +220,25 @@ export class Subscription {
         },
       })
     }
+  }
+
+  private async handleCompactionStatus(
+    event: EventSessionCompactionStarted | EventSessionCompacted,
+    status: "started" | "completed",
+    message: string,
+  ) {
+    const session = await Effect.runPromise(this.input.session.tryGet(event.properties.sessionID))
+    if (!session) return
+    await this.input.connection.sessionUpdate({
+      sessionId: session.id,
+      update: {
+        sessionUpdate: "command_status_update",
+        command: "compact",
+        status,
+        noticeId: `command:compact:${event.properties.messageID}`,
+        message,
+      } as unknown as Parameters<Connection["sessionUpdate"]>[0]["update"],
+    })
   }
 
   private async fetchPartMetadata(sessionId: string, cwd: string, messageId: string, partId: string) {

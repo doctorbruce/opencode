@@ -1,6 +1,7 @@
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
 import { Provider } from "@/provider/provider"
+import { Skill } from "@/skill"
 import * as InstanceState from "@/effect/instance-state"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -12,6 +13,7 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
     const agentSvc = yield* Agent.Service
     const providerSvc = yield* Provider.Service
     const configSvc = yield* Config.Service
+    const skillSvc = yield* Skill.Service
 
     const get = Effect.fn("ConfigHttpApi.get")(function* () {
       return yield* configSvc.get()
@@ -26,6 +28,7 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
     const reload = Effect.fn("ConfigHttpApi.reload")(function* () {
       yield* configSvc.reload()
       yield* agentSvc.reload()
+      yield* skillSvc.reload()
       return true
     })
 

@@ -523,6 +523,59 @@ it.instance("loop calls LLM and returns assistant message", () =>
   }),
 )
 
+it.instance("loop compacts before sending an oversized prompt to the provider", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => {
+      const config = providerCfg(url)
+      return {
+        ...config,
+        provider: {
+          ...config.provider,
+          test: {
+            ...config.provider.test,
+            models: {
+              ...config.provider.test.models,
+              "test-model": {
+                ...config.provider.test.models["test-model"],
+                limit: { context: 5_000, output: 1_000 },
+              },
+            },
+          },
+        },
+      }
+    })
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Prompt preflight compaction",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const seeded = yield* seed(chat.id, { finish: "stop" })
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: seeded.user.id,
+      sessionID: chat.id,
+      type: "text",
+      text: "x".repeat(50_000),
+    })
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "continue" }],
+    })
+    yield* llm.text("summary")
+    yield* llm.text("final")
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+
+    expect(yield* llm.hits).toHaveLength(2)
+    expect(messages.some((message) => message.parts.some((part) => part.type === "compaction"))).toBe(true)
+    expect(result.parts.some((part) => part.type === "text" && part.text === "final")).toBe(true)
+  }),
+)
+
 it.instance("prompt emits a prompt-scoped completed event", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)

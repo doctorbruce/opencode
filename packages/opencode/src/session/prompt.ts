@@ -1224,6 +1224,74 @@ export const layer = Layer.effect(
             Effect.provideService(Session.Service, sessions),
           )
 
+          if (step > 1 && lastFinished) {
+            for (const m of msgs) {
+              if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
+              for (const p of m.parts) {
+                if (p.type !== "text" || p.ignored || p.synthetic) continue
+                if (!p.text.trim()) continue
+                p.text =
+                  promptLanguage === "zh"
+                    ? [
+                        "<system-reminder>",
+                        "用户发送了以下消息：",
+                        p.text,
+                        "",
+                        "请处理这条消息，并继续你的任务。",
+                        "</system-reminder>",
+                      ].join("\n")
+                    : [
+                        "<system-reminder>",
+                        "The user sent the following message:",
+                        p.text,
+                        "",
+                        "Please address this message and continue with your tasks.",
+                        "</system-reminder>",
+                      ].join("\n")
+              }
+            }
+          }
+
+          yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
+
+          const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
+            sys.skills(agent, promptLanguage),
+            sys.environment(model, promptLanguage),
+            instruction.system().pipe(Effect.orDie),
+            sys.mcp(agent, session.permission),
+            MessageV2.toModelMessagesEffect(msgs, model),
+          ])
+          const system = [
+            ...env,
+            ...instructions,
+            ...(mcpInstructions ? [mcpInstructions] : []),
+            ...(skills ? [skills] : []),
+          ]
+          const format = lastUser.format ?? { type: "text" as const }
+          if (format.type === "json_schema")
+            system.push(promptLanguage === "zh" ? STRUCTURED_OUTPUT_SYSTEM_PROMPT_ZH : STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+          const requestMessages = [
+            ...modelMsgs,
+            ...(isLastStep
+              ? [
+                  {
+                    role: "assistant" as const,
+                    content: promptLanguage === "zh" ? MAX_STEPS_ZH : MAX_STEPS_PROMPT,
+                  },
+                ]
+              : []),
+          ]
+          if (yield* compaction.isPromptOverflow({ system, messages: requestMessages, model })) {
+            yield* compaction.create({
+              sessionID,
+              agent: lastUser.agent,
+              model: lastUser.model,
+              auto: true,
+              overflow: true,
+            })
+            continue
+          }
+
           const msg: SessionV1.Assistant = {
             id: MessageID.ascending(),
             parentID: lastUser.id,
@@ -1292,54 +1360,6 @@ export const layer = Layer.effect(
             if (step === 1)
               yield* summary.summarize({ sessionID, messageID: lastUser.id }).pipe(Effect.ignore, Effect.forkIn(scope))
 
-            if (step > 1 && lastFinished) {
-              for (const m of msgs) {
-                if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
-                for (const p of m.parts) {
-                  if (p.type !== "text" || p.ignored || p.synthetic) continue
-                  if (!p.text.trim()) continue
-                  p.text =
-                    promptLanguage === "zh"
-                      ? [
-                          "<system-reminder>",
-                          "用户发送了以下消息：",
-                          p.text,
-                          "",
-                          "请处理这条消息，并继续你的任务。",
-                          "</system-reminder>",
-                        ].join("\n")
-                      : [
-                          "<system-reminder>",
-                          "The user sent the following message:",
-                          p.text,
-                          "",
-                          "Please address this message and continue with your tasks.",
-                          "</system-reminder>",
-                        ].join("\n")
-                }
-              }
-            }
-
-            yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
-
-            const [skills, env, instructions, mcpInstructions, modelMsgs] = yield* Effect.all([
-              sys.skills(agent, promptLanguage),
-              sys.environment(model, promptLanguage),
-              instruction.system().pipe(Effect.orDie),
-              sys.mcp(agent, session.permission),
-              MessageV2.toModelMessagesEffect(msgs, model),
-            ])
-            const system = [
-              ...env,
-              ...instructions,
-              ...(mcpInstructions ? [mcpInstructions] : []),
-              ...(skills ? [skills] : []),
-            ]
-            const format = lastUser.format ?? { type: "text" as const }
-            if (format.type === "json_schema")
-              system.push(
-                promptLanguage === "zh" ? STRUCTURED_OUTPUT_SYSTEM_PROMPT_ZH : STRUCTURED_OUTPUT_SYSTEM_PROMPT,
-              )
             const result = yield* handle.process({
               user: lastUser,
               agent,
@@ -1347,17 +1367,7 @@ export const layer = Layer.effect(
               sessionID,
               parentSessionID: session.parentID,
               system,
-              messages: [
-                ...modelMsgs,
-                ...(isLastStep
-                  ? [
-                      {
-                        role: "assistant" as const,
-                        content: promptLanguage === "zh" ? MAX_STEPS_ZH : MAX_STEPS_PROMPT,
-                      },
-                    ]
-                  : []),
-              ],
+              messages: requestMessages,
               tools,
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,

@@ -2,6 +2,22 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-07-09
+
+### Preflight context compaction
+
+- Added prompt-level context-window preflight before provider requests so long histories are automatically compacted before they can overflow the model window.
+- Kept recoverable provider `ContextOverflowError` as an internal compaction signal when automatic compaction is enabled instead of publishing a user-visible failure first.
+- Added regression coverage for preflight compaction and provider overflow recovery without `session.error` events.
+- Forwarded opencode compaction start and finish events through ACP `command_status_update` so Astron Cowork shows status-only compression progress during automatic threshold compaction.
+
+## 2026-07-07
+
+### Runtime skill path reload
+
+- Extended `/config/reload` to refresh the opencode Skill service cache after reloading generated config and agents.
+- This lets Astron Cowork attach plugins whose app-level skills are exposed through `skills.paths` without disposing or restarting the sidecar instance.
+
 ## 2026-07-06
 
 ### Subagent permission inheritance
