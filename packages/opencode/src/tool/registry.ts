@@ -23,6 +23,7 @@ import type { JSONSchema7, JSONSchema7Definition } from "@ai-sdk/provider"
 import { Schema } from "effect"
 import z from "zod"
 import { Plugin } from "../plugin"
+import { importExternalPluginModule } from "../plugin/bundled-runtime"
 import { Provider } from "@/provider/provider"
 
 import { WebSearchTool } from "./websearch"
@@ -178,7 +179,7 @@ export const layer = Layer.effect(
           const namespace = path.basename(match, path.extname(match))
           // `match` is an absolute filesystem path from `Glob.scanSync(..., { absolute: true })`.
           // Import it as `file://` so Node on Windows accepts the dynamic import.
-          const mod = yield* Effect.promise(() => import(pathToFileURL(match).href))
+          const mod = yield* Effect.promise(() => importExternalPluginModule(pathToFileURL(match).href))
           for (const [id, def] of Object.entries(mod)) {
             if (!isPluginTool(def)) continue
             custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))

@@ -272,6 +272,47 @@ describe("tool.registry", () => {
   )
 
   it.instance(
+    "loads config-scoped plugin tools without local node_modules",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const opencode = path.join(test.directory, ".opencode")
+        const customTools = path.join(opencode, "tools")
+        yield* Effect.promise(() => fs.mkdir(customTools, { recursive: true }))
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(customTools, "addition.ts"),
+            [
+              'import { tool } from "@opencode-ai/plugin"',
+              "export default tool({",
+              "  description: 'Use this tool to add two numbers and return their sum.',",
+              "  args: {",
+              "    left: tool.schema.number(),",
+              "    right: tool.schema.number(),",
+              "  },",
+              "  execute: async (args) => `${args.left} + ${args.right} = ${args.left + args.right}`,",
+              "})",
+              "",
+            ].join("\n"),
+          ),
+        )
+
+        const localPlugin = yield* Effect.promise(() =>
+          fs
+            .stat(path.join(opencode, "node_modules", "@opencode-ai", "plugin"))
+            .then(() => true)
+            .catch(() => false),
+        )
+        expect(localPlugin).toBe(false)
+
+        const registry = yield* ToolRegistry.Service
+        const loaded = (yield* registry.all()).find((tool) => tool.id === "addition")
+        expect(loaded?.description).toBe("Use this tool to add two numbers and return their sum.")
+      }),
+    20_000,
+  )
+
+  it.instance(
     "preserves Zod arg descriptions from older config-scoped plugin packages",
     () =>
       Effect.gen(function* () {

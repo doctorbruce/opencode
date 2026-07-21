@@ -56,6 +56,7 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 
 - Added an amio-agent runtime fallback for external tool plugins that import `@opencode-ai/plugin` from user config directories without a local `node_modules`.
 - The fallback bundles the external plugin entry with an opencode-provided plugin API shim instead of requiring Astron Cowork to copy an `opencode-runtime-template` dependency tree into each user profile.
+- Routed config-scoped custom tools through the same bundled runtime fallback so `tools/*.ts` files also load when the user config directory has no local dependencies.
 - Added standalone binary regression coverage that loads an external tool plugin from an isolated directory with no local dependencies.
 - Added standalone binary regression coverage for bundled provider dependencies such as `@ai-sdk/openai-compatible`, confirming they load without a user-profile dependency template.
 
