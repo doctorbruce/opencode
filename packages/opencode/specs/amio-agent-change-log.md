@@ -2,6 +2,20 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-07-21
+
+### Deferred custom tool loading
+
+- Added a model-facing `tool_search` built-in tool so registered custom tools can stay out of the initial provider tool list and be loaded by intent when needed.
+- Marked config/plugin custom tools as deferred by default while keeping built-in tools directly available; custom tools can opt out with `deferLoading: false`.
+- Added session tool selection coverage so a completed `tool_search` result reveals only the matched deferred tools on the next model step.
+
+### Skill search prompt routing
+
+- Added a model-facing `skill_search` built-in tool that returns a small set of currently available skill names and descriptions without loading full skill content or local paths.
+- Replaced the full `<available_skills>` system prompt dump with concise instructions to search for skills before calling `skill` by exact name.
+- Updated the `skill` tool description and schema wording so models do not infer skill names from stale prompt memory.
+
 ## 2026-07-09
 
 ### Preflight context compaction

@@ -57,6 +57,7 @@ export interface Def<
   M extends Metadata = Metadata,
 > {
   id: string
+  defer?: boolean
   description: string
   parameters: Parameters
   jsonSchema?: JSONSchema7

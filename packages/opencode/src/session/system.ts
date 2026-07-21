@@ -60,7 +60,6 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Sy
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const skill = yield* Skill.Service
     const mcp = yield* MCP.Service
     const locations = yield* LocationServiceMap.Service
 
@@ -128,25 +127,27 @@ export const layer = Layer.effect(
       }),
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, language: PromptLanguage = "en") {
-        if (Permission.disabled(["skill"], agent.permission).has("skill")) return
-
-        const list = yield* skill.available(agent)
+        const disabledTools = Permission.disabled(["skill", "skill_search"], agent.permission)
+        if (disabledTools.has("skill")) return
+        const searchAllowed = !disabledTools.has("skill_search")
 
         if (language === "zh")
           return [
             "技能提供面向特定任务的专门指令和工作流。",
-            "当任务匹配某个技能描述时，使用 skill tool 加载该技能。",
-            // the agents seem to ingest the information about skills a bit better if we present a more verbose
-            // version of them here and a less verbose version in tool description, rather than vice versa.
-            Skill.fmt(list, { verbose: true }),
+            searchAllowed
+              ? "当任务可能需要专门技能时，先调用 `skill_search` 查询当前可用技能。"
+              : "只有用户明确给出精确 skill 名称时，才调用 `skill`。",
+            "不要凭记忆或猜测调用 skill；只有用户明确给出 skill 名称，或 `skill_search` 返回了精确 skill name 后，才调用 `skill`。",
+            "面向用户说明能力时使用自然语言；除非用户明确询问，不要暴露内部 skill 名称。",
           ].join("\n")
 
         return [
           "Skills provide specialized instructions and workflows for specific tasks.",
-          "Use the skill tool to load a skill when a task matches its description.",
-          // the agents seem to ingest the information about skills a bit better if we present a more verbose
-          // version of them here and a less verbose version in tool description, rather than vice versa.
-          Skill.fmt(list, { verbose: true }),
+          searchAllowed
+            ? "When a task may need a specialized skill, first call `skill_search` to find currently available skills."
+            : "Only call `skill` when the user explicitly provides the exact skill name.",
+          "Do not guess skill names. Call `skill` only when the user gave an exact skill name or `skill_search` returned the exact skill name.",
+          "Describe capabilities conversationally to users; do not expose internal skill names unless explicitly asked.",
         ].join("\n")
       }),
 

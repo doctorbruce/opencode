@@ -156,11 +156,14 @@ describe("session.system", () => {
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
       const output = yield* prompt.skills(build, "zh")
-      expect(output).toContain("技能")
+      expect(output).toContain("skill_search")
+      expect(output).toContain("不要凭记忆或猜测调用 skill")
+      expect(output).not.toContain("<available_skills>")
+      expect(output).not.toContain("alpha-skill")
     }),
   )
 
-  it.effect("skills output is sorted by name and stable across calls", () =>
+  it.effect("skills output routes through skill_search without dumping available skills", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
       const first = yield* prompt.skills(build)
@@ -168,14 +171,11 @@ describe("session.system", () => {
       const output = first ?? (yield* Effect.fail(new NamedError.Unknown({ message: "missing skills output" })))
 
       expect(first).toBe(second)
-
-      const alpha = output.indexOf("<name>alpha-skill</name>")
-      const middle = output.indexOf("<name>middle-skill</name>")
-      const zeta = output.indexOf("<name>zeta-skill</name>")
-
-      expect(alpha).toBeGreaterThan(-1)
-      expect(middle).toBeGreaterThan(alpha)
-      expect(zeta).toBeGreaterThan(middle)
+      expect(output).toContain("skill_search")
+      expect(output).toContain("Do not guess skill names")
+      expect(output).not.toContain("<available_skills>")
+      expect(output).not.toContain("alpha-skill")
+      expect(output).not.toContain("Zeta skill.")
       expect(output).not.toContain("manual-skill")
     }),
   )

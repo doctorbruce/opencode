@@ -8,6 +8,7 @@ import { Tool } from "@/tool/tool"
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
+import { TOOL_SEARCH_TOOL_ID } from "@/tool/tool-search"
 
 import { Plugin } from "@/plugin"
 import type { TaskPromptOps } from "@/tool/task"
@@ -21,6 +22,8 @@ import { EffectBridge } from "@/effect/bridge"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
+
+export { TOOL_SEARCH_TOOL_ID } from "@/tool/tool-search"
 
 const MCP_RESOURCE_TOOLS = {
   list: "list_mcp_resources",
@@ -52,13 +55,32 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const registry = yield* ToolRegistry.Service
   const mcp = yield* MCP.Service
   const truncate = yield* Truncate.Service
+  const registryTools = yield* registry.tools({
+    modelID: ModelV2.ID.make(input.model.api.id),
+    providerID: input.model.providerID,
+    agent: input.agent,
+  })
+  const disabledTools = Permission.disabled(
+    registryTools.map((tool) => tool.id),
+    Permission.merge(input.agent.permission, input.session.permission ?? []),
+  )
+  const permittedRegistryTools = registryTools.filter((tool) => !disabledTools.has(tool.id))
+  const deferredTools = permittedRegistryTools
+    .filter((tool) => tool.defer)
+    .map((tool) => ({ id: tool.id, description: tool.description }))
+  const modelFacingTools = selectModelFacingToolDefs({ tools: permittedRegistryTools, messages: input.messages })
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
     abort: options.abortSignal!,
     messageID: input.processor.message.id,
     callID: options.toolCallId,
-    extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, promptOps: input.promptOps },
+    extra: {
+      model: input.model,
+      bypassAgentCheck: input.bypassAgentCheck,
+      promptOps: input.promptOps,
+      deferredTools,
+    },
     agent: input.agent.name,
     messages: input.messages,
     metadata: (val) =>
@@ -86,11 +108,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         .pipe(Effect.orDie),
   })
 
-  for (const item of yield* registry.tools({
-    modelID: ModelV2.ID.make(input.model.api.id),
-    providerID: input.model.providerID,
-    agent: input.agent,
-  })) {
+  for (const item of modelFacingTools) {
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
       description: item.description,
@@ -484,6 +502,28 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
   return tools
 })
+
+export function selectModelFacingToolDefs(input: { tools: Tool.Def[]; messages: SessionV1.WithParts[] }) {
+  const loaded = loadedDeferredTools(input.messages)
+  return input.tools.filter((tool) => !tool.defer || tool.id === TOOL_SEARCH_TOOL_ID || loaded.has(tool.id))
+}
+
+function loadedDeferredTools(messages: SessionV1.WithParts[]) {
+  const result = new Set<string>()
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "tool") continue
+      if (part.tool !== TOOL_SEARCH_TOOL_ID) continue
+      if (part.state.status !== "completed") continue
+      const tools = part.state.metadata?.tools
+      if (!Array.isArray(tools)) continue
+      for (const tool of tools) {
+        if (typeof tool === "string" && tool) result.add(tool)
+      }
+    }
+  }
+  return result
+}
 
 function toRecord(value: unknown) {
   if (isRecord(value)) return value

@@ -16,6 +16,8 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { ToolSearchTool } from "./tool-search"
+import { SkillSearchTool } from "./skill-search"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -106,6 +108,8 @@ export const layer = Layer.effect(
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const skillsearch = yield* SkillSearchTool
+    const toolsearch = yield* ToolSearchTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -127,6 +131,7 @@ export const layer = Layer.effect(
             : Schema.Unknown
           return {
             id,
+            defer: (def as { deferLoading?: boolean }).deferLoading !== false,
             parameters,
             jsonSchema,
             description: def.description,
@@ -208,7 +213,9 @@ export const layer = Layer.effect(
           fetch: Tool.init(webfetch),
           todo: Tool.init(todo),
           search: Tool.init(websearch),
+          skillSearch: Tool.init(skillsearch),
           skill: Tool.init(skilltool),
+          toolSearch: Tool.init(toolsearch),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -230,6 +237,8 @@ export const layer = Layer.effect(
             tool.fetch,
             tool.todo,
             tool.search,
+            tool.toolSearch,
+            tool.skillSearch,
             tool.skill,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
@@ -294,6 +303,7 @@ export const layer = Layer.effect(
               : undefined
           return {
             id: tool.id,
+            defer: tool.defer,
             description: [output.description, tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined]
               .filter(Boolean)
               .join("\n"),

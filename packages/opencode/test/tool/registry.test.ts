@@ -71,6 +71,15 @@ describe("tool.registry", () => {
     }),
   )
 
+  it.instance("exposes skill_search as a built-in tool", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const ids = yield* registry.ids()
+
+      expect(ids).toContain("skill_search")
+    }),
+  )
+
   it.instance("hides task background parameter unless experimental background subagents are enabled", () =>
     Effect.gen(function* () {
       const registry = yield* ToolRegistry.Service
@@ -244,6 +253,7 @@ describe("tool.registry", () => {
       const registry = yield* ToolRegistry.Service
       const loaded = (yield* registry.all()).find((tool) => tool.id === "sql")
       if (!loaded) throw new Error("custom sql tool was not loaded")
+      expect(loaded.defer).toBe(true)
       expect(loaded?.jsonSchema).toMatchObject({
         type: "object",
         properties: {
@@ -262,6 +272,7 @@ describe("tool.registry", () => {
       })
       const promptTool = promptTools.find((tool) => tool.id === "sql")
       if (!promptTool) throw new Error("custom sql tool was not returned for prompts")
+      expect(promptTool.defer).toBe(true)
       expect(ToolJsonSchema.fromTool(promptTool)).toMatchObject({
         properties: {
           query: { type: "string", description: "SQL query to execute" },
