@@ -1,6 +1,9 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { llmClient } from "@opencode-ai/core/effect/app-node-platform"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { mkdir } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { Database } from "@opencode-ai/core/database/database"
 import { Provider } from "@/provider/provider"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
@@ -75,6 +78,50 @@ const streamEventType = (value: unknown) =>
 
 const isContentDelta = (event: LLMEvent) =>
   event.type === "text-delta" || event.type === "reasoning-delta" || event.type === "tool-input-delta"
+
+function dumpProviderPrompt(input: {
+  readonly sessionID: string
+  readonly providerID: string
+  readonly modelID: string
+  readonly agent: string
+  readonly prompt: unknown
+  readonly activeTools: string[]
+  readonly toolChoice: StreamInput["toolChoice"]
+  readonly maxOutputTokens: number
+}) {
+  if (!["1", "true"].includes(process.env.OPENCODE_DUMP_PROVIDER_PROMPT?.trim().toLowerCase() ?? "")) {
+    return Promise.resolve()
+  }
+  const createdAt = new Date().toISOString()
+  const name = `provider-prompt-${createdAt}-${input.sessionID}-${input.providerID}-${input.modelID}`
+    .replace(/[:.]/g, "-")
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+  const dir = dirname(Database.path())
+  return mkdir(dir, { recursive: true })
+    .then(() =>
+      Bun.write(
+        join(dir, `${name}.json`),
+        JSON.stringify(
+          {
+            createdAt,
+            sessionID: input.sessionID,
+            providerID: input.providerID,
+            modelID: input.modelID,
+            agent: input.agent,
+            promptChars: promptValueSize(input.prompt),
+            promptItemCount: Array.isArray(input.prompt) ? input.prompt.length : undefined,
+            activeTools: input.activeTools,
+            toolChoice: input.toolChoice,
+            maxOutputTokens: input.maxOutputTokens,
+            prompt: input.prompt,
+          },
+          null,
+          2,
+        ),
+      ),
+    )
+    .then(() => undefined)
+}
 
 export type StreamInput = {
   user: SessionV1.User
@@ -405,6 +452,25 @@ const live: Layer.Layer<
                   args.params.prompt = transformed
                   if (!providerPromptObserved.transformed) {
                     providerPromptObserved.transformed = true
+                    await dumpProviderPrompt({
+                      sessionID: input.sessionID,
+                      providerID: input.model.providerID,
+                      modelID: input.model.id,
+                      agent: input.agent.name,
+                      prompt: transformed,
+                      activeTools: Object.keys(prepared.tools).filter((x) => x !== "invalid"),
+                      toolChoice: input.toolChoice,
+                      maxOutputTokens: prepared.params.maxOutputTokens,
+                    }).catch((error) => {
+                      bridge.fork(
+                        Effect.logError("provider prompt dump failed", {
+                          providerID: input.model.providerID,
+                          modelID: input.model.id,
+                          "session.id": input.sessionID,
+                          error,
+                        }),
+                      )
+                    })
                     bridge.fork(
                       Effect.logInfo("provider prompt transformed", {
                         providerID: input.model.providerID,
@@ -452,7 +518,7 @@ const live: Layer.Layer<
       startedAt: number,
       stream: Stream.Stream<LLMEvent, unknown>,
     ) => {
-      const observed = { firstEvent: false, firstDelta: false }
+      const observed = { firstEvent: false, firstDelta: false, firstReasoningDelta: false, firstTextDelta: false }
       return stream.pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
@@ -470,6 +536,28 @@ const live: Layer.Layer<
             if (!observed.firstDelta && isContentDelta(event)) {
               observed.firstDelta = true
               yield* Effect.logInfo("llm first content delta", {
+                providerID: input.model.providerID,
+                modelID: input.model.id,
+                "session.id": input.sessionID,
+                runtime,
+                eventType: event.type,
+                elapsedMs: Date.now() - startedAt,
+              })
+            }
+            if (!observed.firstReasoningDelta && event.type === "reasoning-delta") {
+              observed.firstReasoningDelta = true
+              yield* Effect.logInfo("llm first reasoning delta", {
+                providerID: input.model.providerID,
+                modelID: input.model.id,
+                "session.id": input.sessionID,
+                runtime,
+                eventType: event.type,
+                elapsedMs: Date.now() - startedAt,
+              })
+            }
+            if (!observed.firstTextDelta && event.type === "text-delta") {
+              observed.firstTextDelta = true
+              yield* Effect.logInfo("llm first text delta", {
                 providerID: input.model.providerID,
                 modelID: input.model.id,
                 "session.id": input.sessionID,

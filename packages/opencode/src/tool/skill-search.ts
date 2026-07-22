@@ -7,10 +7,11 @@ export const SKILL_SEARCH_TOOL_ID = "skill_search"
 
 export const Parameters = Schema.Struct({
   query: Schema.String.annotate({
-    description: "Search available skills by intent, capability, or exact name. Use select:<skill_name> for exact names.",
+    description:
+      'Search available skills by intent, capability, or exact name. Use select:<skill_name> for exact names. Use "list" or the user\'s capability-list question to list available skills.',
   }),
   limit: Schema.optional(Schema.Number).annotate({
-    description: "Maximum number of matching skills to return. Defaults to 5.",
+    description: "Maximum number of matching skills to return. Defaults to 20 for searches and 100 for list queries.",
   }),
 })
 
@@ -22,38 +23,46 @@ export const SkillSearchTool = Tool.define(
 
     return {
       description:
-        "Searches currently available skills without loading their full instructions. Use this before calling the skill tool when you do not know the exact skill name.",
+        "Searches or lists currently available skills without loading their full instructions. Use this before calling the skill tool when you do not know the exact skill name, and use it when users ask which skills or callable capabilities are available.",
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const agent = yield* agents.get(ctx.agent)
-          const matches = search(yield* skill.available(agent), params.query).slice(0, limit(params.limit))
+          const result = search(yield* skill.available(agent), params.query)
+          const matches = result.skills.slice(0, limit(params.limit, result.inventory))
           const names = matches.map((skill) => skill.name)
+          const truncated = matches.length < result.skills.length
           yield* ctx.metadata({
-            title: names.length ? `Found skills: ${names.join(", ")}` : "No skills matched",
-            metadata: { skills: names },
+            title: names.length ? skillTitle(matches.length, result.skills.length) : "No skills matched",
+            metadata: { skills: names, total: result.skills.length, shown: matches.length, truncated },
           })
 
           if (matches.length === 0) {
             return {
               title: "No skills matched",
-              output: `No skills matched "${params.query}". Try a broader query or use select:<skill_name> if you know the exact skill name.`,
-              metadata: { skills: names },
+              output: `No skills matched "${params.query}". Try a broader query, use "list" to see available skills, or use select:<skill_name> if you know the exact skill name.`,
+              metadata: { skills: names, total: result.skills.length, shown: matches.length, truncated },
             }
           }
 
           return {
-            title: `Found ${matches.length} skill${matches.length === 1 ? "" : "s"}`,
+            title: skillTitle(matches.length, result.skills.length),
             output: [
-              "Matching skills:",
+              result.inventory ? "Available skills:" : "Matching skills:",
               "",
               ...matches.map(
                 (skill) => `- ${skill.name}: ${firstLine(skill.description ?? "No description provided.")}`,
               ),
+              ...(truncated
+                ? [
+                    "",
+                    `Showing ${matches.length} of ${result.skills.length} skills. Call skill_search with a more specific query or a higher limit up to ${MAX_LIMIT}.`,
+                  ]
+                : []),
               "",
               "Call the skill tool with the exact returned skill name if one is relevant.",
             ].join("\n"),
-            metadata: { skills: names },
+            metadata: { skills: names, total: result.skills.length, shown: matches.length, truncated },
           }
         }),
     }
@@ -61,7 +70,8 @@ export const SkillSearchTool = Tool.define(
 )
 
 function search(skills: Skill.Info[], query: string) {
-  const normalized = query.trim().toLowerCase()
+  const normalized = normalizeQuery(query)
+  const sorted = skills.toSorted((a, b) => a.name.localeCompare(b.name))
   if (normalized.startsWith("select:")) {
     const requested = new Set(
       normalized
@@ -70,31 +80,84 @@ function search(skills: Skill.Info[], query: string) {
         .map((item) => item.trim())
         .filter(Boolean),
     )
-    return skills.filter((skill) => requested.has(skill.name.toLowerCase()))
+    return { inventory: false, skills: sorted.filter((skill) => requested.has(skill.name.toLowerCase())) }
   }
 
-  const terms = normalized.split(/\s+/).filter(Boolean)
-  if (terms.length === 0) return skills.toSorted((a, b) => a.name.localeCompare(b.name))
+  if (isInventoryQuery(normalized)) return { inventory: true, skills: sorted }
 
-  return skills
-    .map((skill) => ({ skill, score: score(skill, terms) }))
-    .filter((item) => item.score > 0)
-    .toSorted((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name))
-    .map((item) => item.skill)
+  const terms = searchTerms(normalized)
+  if (terms.length === 0) return { inventory: true, skills: sorted }
+
+  return {
+    inventory: false,
+    skills: sorted
+      .map((skill) => ({ skill, score: score(skill, terms) }))
+      .filter((item) => item.score > 0)
+      .toSorted((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name))
+      .map((item) => item.skill),
+  }
 }
 
 function score(skill: Skill.Info, terms: string[]) {
   const name = skill.name.toLowerCase()
   const text = `${name} ${(skill.description ?? "").toLowerCase()}`
-  if (!terms.every((term) => text.includes(term))) return 0
-  return terms.reduce((sum, term) => sum + (name.includes(term) ? 3 : 1), 0)
+  return terms.reduce((sum, term) => sum + (name.includes(term) ? 4 : text.includes(term) ? 1 : 0), 0)
 }
 
-function limit(value: number | undefined) {
-  if (value === undefined || !Number.isFinite(value)) return 5
-  return Math.max(1, Math.min(20, Math.trunc(value)))
+function normalizeQuery(query: string) {
+  return query.trim().toLowerCase()
+}
+
+function isInventoryQuery(query: string) {
+  if (query.length === 0) return true
+  if (["list", "all", "skills", "capabilities", "available skills", "available capabilities"].includes(query)) {
+    return true
+  }
+  return /技能|能力|能做什么|会什么|有哪些|有什么|what.*(skills|capabilities|can you do)|which.*skills/.test(query)
+}
+
+function searchTerms(query: string) {
+  const terms = query.match(/[a-z0-9][a-z0-9_-]*|[\p{Script=Han}]+/gu) ?? []
+  return Array.from(new Set(terms.filter((term) => !STOP_TERMS.has(term))))
+}
+
+const STOP_TERMS = new Set([
+  "skill",
+  "skills",
+  "capability",
+  "capabilities",
+  "available",
+  "tool",
+  "tools",
+  "use",
+  "using",
+  "find",
+  "search",
+  "技能",
+  "能力",
+  "工具",
+  "可用",
+  "可以",
+  "哪些",
+  "什么",
+  "帮我",
+  "一下",
+])
+
+const DEFAULT_SEARCH_LIMIT = 20
+const DEFAULT_INVENTORY_LIMIT = 100
+const MAX_LIMIT = 100
+
+function limit(value: number | undefined, inventory: boolean) {
+  if (value === undefined || !Number.isFinite(value)) return inventory ? DEFAULT_INVENTORY_LIMIT : DEFAULT_SEARCH_LIMIT
+  return Math.max(1, Math.min(MAX_LIMIT, Math.trunc(value)))
 }
 
 function firstLine(value: string) {
   return value.split(/\r?\n/)[0]?.trim() ?? ""
+}
+
+function skillTitle(shown: number, total: number) {
+  if (shown === total) return `Found ${shown} skill${shown === 1 ? "" : "s"}`
+  return `Found ${shown} of ${total} skills`
 }

@@ -135,6 +135,51 @@ Instructions here.
     ),
   )
 
+  it.live("uses agents/openai.yaml short_description for skill descriptions", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const skillDir = path.join(dir, ".opencode", "skill", "openai-yaml-skill")
+          yield* Effect.promise(() => fs.mkdir(path.join(skillDir, "agents"), { recursive: true }))
+          yield* Effect.promise(() =>
+            Promise.all([
+              Bun.write(
+                path.join(skillDir, "SKILL.md"),
+                `---
+name: openai-yaml-skill
+description: Long trigger description that should not be shown in the skill index.
+---
+
+# OpenAI YAML Skill
+`,
+              ),
+              Bun.write(
+                path.join(skillDir, "agents", "openai.yaml"),
+                `interface:
+  short_description: "短描述"
+  i18n:
+    zh-CN:
+      short_description: "中文短描述"
+    en-US:
+      short_description: "English short description"
+`,
+              ),
+            ]),
+          )
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all()).find((x) => x.name === "openai-yaml-skill")
+          expect(item).toBeDefined()
+          expect(item!.description).toBe("短描述")
+          expect(item!.descriptions).toEqual({
+            "zh-CN": "中文短描述",
+            "en-US": "English short description",
+          })
+        }),
+      { git: true },
+    ),
+  )
+
   it.live("returns skill directories from Skill.dirs", () =>
     provideTmpdirInstance(
       (dir) =>

@@ -37,6 +37,7 @@ const CUSTOMIZE_OPENCODE_SKILL_BODY = SkillPlugin.CustomizeOpencodeContent
 export const Info = Schema.Struct({
   name: Schema.String,
   description: Schema.optional(Schema.String),
+  descriptions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   location: Schema.String,
   content: Schema.String,
 })
@@ -122,6 +123,7 @@ const add = Effect.fnUntraced(function* (state: State, match: string, events: Ev
   if (!md) return
 
   if (!isSkillFrontmatter(md.data)) return
+  const interfaceDescription = yield* readOpenAIYamlDescription(path.dirname(match))
 
   if (state.skills[md.data.name]) {
     yield* Effect.logWarning("duplicate skill name", {
@@ -134,11 +136,89 @@ const add = Effect.fnUntraced(function* (state: State, match: string, events: Ev
   state.dirs.add(path.dirname(match))
   state.skills[md.data.name] = {
     name: md.data.name,
-    description: md.data.description,
+    description: interfaceDescription.description ?? md.data.description,
+    ...(interfaceDescription.descriptions ? { descriptions: interfaceDescription.descriptions } : {}),
     location: match,
     content: md.content,
   }
 })
+
+type OpenAIYamlDescription = {
+  readonly description?: string
+  readonly descriptions?: Record<string, string>
+}
+
+const readOpenAIYamlDescription = Effect.fnUntraced(function* (skillDir: string) {
+  return yield* Effect.tryPromise({
+    try: async () => {
+      const file = Bun.file(path.join(skillDir, "agents", "openai.yaml"))
+      if (!(await file.exists())) return {}
+      return parseOpenAIYamlDescription(await file.text())
+    },
+    catch: (error) => error,
+  }).pipe(Effect.catch(() => Effect.succeed({} as OpenAIYamlDescription)))
+})
+
+function parseOpenAIYamlDescription(raw: string): OpenAIYamlDescription {
+  const lines = raw.split(/\r?\n/)
+  const output: { description?: string; descriptions: Record<string, string> } = { descriptions: {} }
+  let inInterface = false
+  let inI18n = false
+  let locale: string | undefined
+
+  for (const line of lines) {
+    const indent = line.match(/^ */)?.[0].length ?? 0
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+
+    if (indent === 0) {
+      inInterface = trimmed === "interface:"
+      inI18n = false
+      locale = undefined
+      continue
+    }
+
+    if (!inInterface) continue
+
+    if (indent === 2 && trimmed === "i18n:") {
+      inI18n = true
+      locale = undefined
+      continue
+    }
+
+    if (indent === 2) {
+      inI18n = false
+      locale = undefined
+      const value = yamlScalar(trimmed, "short_description")
+      if (value) output.description = value
+      continue
+    }
+
+    if (!inI18n) continue
+
+    if (indent === 4 && trimmed.endsWith(":")) {
+      locale = trimmed.slice(0, -1).trim()
+      continue
+    }
+
+    if (indent === 6 && locale) {
+      const value = yamlScalar(trimmed, "short_description")
+      if (value) output.descriptions[locale] = value
+    }
+  }
+
+  return {
+    ...(output.description ? { description: output.description } : {}),
+    ...(Object.keys(output.descriptions).length > 0 ? { descriptions: output.descriptions } : {}),
+  }
+}
+
+function yamlScalar(line: string, key: string) {
+  if (!line.startsWith(`${key}:`)) return
+  const value = line.slice(key.length + 1).trim()
+  if (!value) return
+  return value.replace(/^['"]|['"]$/g, "").trim() || undefined
+}
 
 const scan = Effect.fnUntraced(function* (
   state: ScanState,

@@ -22,6 +22,10 @@ const skills: Skill.Info[] = [
   {
     name: "alpha-skill",
     description: "Alpha skill.",
+    descriptions: {
+      "zh-CN": "Alpha 中文短描述",
+      "en-US": "Alpha English short description",
+    },
     location: "/tmp/alpha-skill/SKILL.md",
     content: "# alpha-skill",
   },
@@ -95,45 +99,56 @@ function model(id: string): Provider.Model {
   }
 }
 
-const it = testEffect(
-  SystemPrompt.layer.pipe(
+function skillServiceLayer(skillList: Skill.Info[]) {
+  return Layer.succeed(
+    Skill.Service,
+    Skill.Service.of({
+      get: (name) => Effect.succeed(skillList.find((skill) => skill.name === name)),
+      require: (name) => {
+        const info = skillList.find((skill) => skill.name === name)
+        if (info) return Effect.succeed(info)
+        return Effect.fail(new Skill.NotFoundError({ name, available: skillList.map((skill) => skill.name) }))
+      },
+      all: () => Effect.succeed(skillList),
+      reload: () => Effect.succeed(skillList),
+      dirs: () => Effect.succeed([]),
+      available: () => Effect.succeed(skillList),
+    }),
+  )
+}
+
+const mcpTestLayer = Layer.mock(MCP.Service, {
+  instructions: () =>
+    Effect.succeed([
+      {
+        name: "guide-server",
+        instructions: "Use lookup before mutate.",
+        tools: [],
+      },
+      {
+        name: "tool-server",
+        instructions: "Prefer search before update.",
+        tools: ["tool-server_search", "tool-server_update"],
+      },
+    ]),
+})
+
+function systemPromptTestLayer(skillList: Skill.Info[]) {
+  return SystemPrompt.layer.pipe(
     Layer.provide(locationServiceMapLayer),
-    Layer.provide(
-      Layer.mock(MCP.Service, {
-        instructions: () =>
-          Effect.succeed([
-            {
-              name: "guide-server",
-              instructions: "Use lookup before mutate.",
-              tools: [],
-            },
-            {
-              name: "tool-server",
-              instructions: "Prefer search before update.",
-              tools: ["tool-server_search", "tool-server_update"],
-            },
-          ]),
-      }),
-    ),
-    Layer.provide(
-      Layer.succeed(
-        Skill.Service,
-        Skill.Service.of({
-          get: (name) => Effect.succeed(skills.find((skill) => skill.name === name)),
-          require: (name) => {
-            const info = skills.find((skill) => skill.name === name)
-            if (info) return Effect.succeed(info)
-            return Effect.fail(new Skill.NotFoundError({ name, available: skills.map((skill) => skill.name) }))
-          },
-          all: () => Effect.succeed(skills),
-          reload: () => Effect.succeed(skills),
-          dirs: () => Effect.succeed([]),
-          available: () => Effect.succeed(skills),
-        }),
-      ),
-    ),
-  ),
-)
+    Layer.provide(mcpTestLayer),
+    Layer.provide(skillServiceLayer(skillList)),
+  )
+}
+
+const it = testEffect(systemPromptTestLayer(skills))
+const bulkSkills: Skill.Info[] = Array.from({ length: 55 }, (_, index) => ({
+  name: `bulk-skill-${String(index + 1).padStart(2, "0")}`,
+  description: `Bulk skill ${index + 1}.`,
+  location: `/tmp/bulk-skill-${index + 1}/SKILL.md`,
+  content: `# bulk-skill-${index + 1}`,
+}))
+const bulkIt = testEffect(systemPromptTestLayer(bulkSkills))
 
 describe("session.system", () => {
   test("uses the English provider prompt by default", () => {
@@ -144,26 +159,66 @@ describe("session.system", () => {
     expect(SystemPrompt.provider(model("gpt-5"), "zh")[0]).toContain("你是")
   })
 
-  it.instance("localizes environment text when prompt_language is zh", () =>
+  it.instance("omits the built-in environment details", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
       const output = yield* prompt.environment(model("gpt-5"), "zh")
-      expect(output[0]).toContain("当前环境")
+      expect(output.join("\n")).not.toContain("当前环境")
+      expect(output.join("\n")).not.toContain("Working directory")
+      expect(output.join("\n")).not.toContain("当前目录")
     }),
   )
 
-  it.effect("localizes skills text when prompt_language is zh", () =>
+  it.effect("adds concise tool discovery guidance", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const zh = yield* prompt.toolDiscovery(build, "zh")
+      const en = yield* prompt.toolDiscovery(build, "en")
+
+      expect(zh).toContain("## 工具发现")
+      expect(zh).toContain("知识库/表格、邮箱/凭据、定时任务")
+      expect(zh).not.toContain("网页搜索")
+      expect(zh).toContain("需要但当前工具列表没有时")
+      expect(zh).toContain("先用 `tool_search`")
+      expect(en).toContain("## Tool Discovery")
+      expect(en).toContain("roughly include knowledge/table queries")
+      expect(en).not.toContain("web search")
+      expect(en).toContain("not in the current tool list")
+      expect(en).toContain("use `tool_search`")
+    }),
+  )
+
+  it.effect("omits tool discovery guidance when tool_search is denied", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.toolDiscovery({
+        ...build,
+        permission: Permission.fromConfig({ "*": "allow", tool_search: "deny" }),
+      }, "zh")
+
+      expect(output).toBeUndefined()
+    }),
+  )
+
+  it.effect("localizes lightweight skill index text when prompt_language is zh", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
       const output = yield* prompt.skills(build, "zh")
+      expect(output).toContain("## 专项技能")
       expect(output).toContain("skill_search")
-      expect(output).toContain("不要凭记忆或猜测调用 skill")
+      expect(output).toContain("当前可用专项技能")
+      expect(output).toContain("- alpha-skill: Alpha 中文短描述")
+      expect(output).toContain("- manual-skill: 无描述。")
+      expect(output).toContain("用户问完整技能/能力清单")
+      expect(output).toContain("只用上方索引、用户输入或 `skill_search` 返回的精确 name")
+      expect(output).toContain("不暴露内部 skill name")
       expect(output).not.toContain("<available_skills>")
-      expect(output).not.toContain("alpha-skill")
+      expect(output).not.toContain("/tmp/alpha-skill")
+      expect(output).not.toContain("# alpha-skill")
     }),
   )
 
-  it.effect("skills output routes through skill_search without dumping available skills", () =>
+  it.effect("skills output renders lightweight index without dumping bodies or paths", () =>
     Effect.gen(function* () {
       const prompt = yield* SystemPrompt.Service
       const first = yield* prompt.skills(build)
@@ -171,12 +226,32 @@ describe("session.system", () => {
       const output = first ?? (yield* Effect.fail(new NamedError.Unknown({ message: "missing skills output" })))
 
       expect(first).toBe(second)
+      expect(output).toContain("## Specialized Skills")
       expect(output).toContain("skill_search")
-      expect(output).toContain("Do not guess skill names")
+      expect(output).toContain("Available specialized skills")
+      expect(output).toContain("- alpha-skill: Alpha English short description")
+      expect(output).toContain("- manual-skill: No description provided.")
+      expect(output).toContain("the user asks for the full skill/capability list")
+      expect(output).toContain("Call `skill` only with an exact name")
+      expect(output).toContain("do not expose internal skill names unless asked")
       expect(output).not.toContain("<available_skills>")
-      expect(output).not.toContain("alpha-skill")
-      expect(output).not.toContain("Zeta skill.")
-      expect(output).not.toContain("manual-skill")
+      expect(output).not.toContain("/tmp/alpha-skill")
+      expect(output).not.toContain("/tmp/zeta-skill")
+      expect(output).not.toContain("# alpha-skill")
+      expect(output).not.toContain("# manual-skill")
+    }),
+  )
+
+  bulkIt.effect("skills output lists every available skill without truncation", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(build, "zh")
+
+      expect(output).toContain("- bulk-skill-01: Bulk skill 1.")
+      expect(output).toContain("- bulk-skill-55: Bulk skill 55.")
+      expect(output).not.toContain("还有")
+      expect(output).not.toContain("未列出")
+      expect(output).not.toContain("more skills omitted")
     }),
   )
 
@@ -187,14 +262,11 @@ describe("session.system", () => {
 
       expect(output).toBe(
         [
-          "<mcp_instructions>",
-          '  <server name="guide-server">',
-          "    Use lookup before mutate.",
-          "  </server>",
-          '  <server name="tool-server">',
-          "    Prefer search before update.",
-          "  </server>",
-          "</mcp_instructions>",
+          "## MCP Instructions",
+          "### guide-server",
+          "Use lookup before mutate.",
+          "### tool-server",
+          "Prefer search before update.",
         ].join("\n"),
       )
     }),
@@ -207,11 +279,9 @@ describe("session.system", () => {
 
       expect(output).toBe(
         [
-          "<mcp_instructions>",
-          '  <server name="guide-server">',
-          "    Use lookup before mutate.",
-          "  </server>",
-          "</mcp_instructions>",
+          "## MCP Instructions",
+          "### guide-server",
+          "Use lookup before mutate.",
         ].join("\n"),
       )
     }),

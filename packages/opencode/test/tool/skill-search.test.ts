@@ -80,7 +80,72 @@ describe("tool.skill_search", () => {
       expect(metadata[0]?.metadata?.skills).toEqual(["review-skill"])
     }),
   )
+
+  it.instance("lists available skills for capability inventory questions", () =>
+    Effect.gen(function* () {
+      const dir = (yield* TestInstance).directory
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "review-skill"), "review-skill", "Review code.")
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "deploy-skill"), "deploy-skill", "Deploy releases.")
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "docs-skill"), "docs-skill", "Write documentation.")
+      yield* useTestHome(dir)
+
+      const result = yield* executeSkillSearch({ query: "你有啥技能呀" })
+
+      expect(result.metadata.skills).toContain("deploy-skill")
+      expect(result.metadata.skills).toContain("docs-skill")
+      expect(result.metadata.skills).toContain("review-skill")
+      expect(result.metadata.total).toBeGreaterThanOrEqual(3)
+      expect(result.metadata.truncated).toBe(false)
+      expect(result.output).toContain("Available skills:")
+      expect(result.output).toContain("deploy-skill")
+      expect(result.output).toContain("docs-skill")
+      expect(result.output).toContain("review-skill")
+    }),
+  )
+
+  it.instance("matches any relevant query term instead of requiring every term", () =>
+    Effect.gen(function* () {
+      const dir = (yield* TestInstance).directory
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "review-skill"), "review-skill", "Review code changes.")
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "deploy-skill"), "deploy-skill", "Deploy release builds.")
+      yield* useTestHome(dir)
+
+      const result = yield* executeSkillSearch({ query: "review release" })
+
+      expect(result.metadata.skills).toContain("review-skill")
+      expect(result.metadata.skills).toContain("deploy-skill")
+      expect(result.output).toContain("review-skill")
+      expect(result.output).toContain("deploy-skill")
+    }),
+  )
 })
+
+function useTestHome(dir: string) {
+  const home = process.env.OPENCODE_TEST_HOME
+  process.env.OPENCODE_TEST_HOME = dir
+  return Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      process.env.OPENCODE_TEST_HOME = home
+    }),
+  )
+}
+
+function executeSkillSearch(input: { query: string; limit?: number }) {
+  return Effect.gen(function* () {
+    const registry = yield* ToolRegistry.Service
+    const agent = { name: "build", mode: "primary" as const, permission: [], options: {} }
+    const tool = (yield* registry.tools({
+      providerID: ProviderV2.ID.opencode,
+      modelID: ModelV2.ID.make("gpt-5"),
+      agent,
+    })).find((tool) => tool.id === SkillSearchTool.id)
+    if (!tool) throw new Error("Skill search tool not found")
+    return yield* tool.execute(input, {
+      ...baseCtx,
+      ask: (_req: Omit<PermissionV1.Request, "id" | "sessionID" | "tool">) => Effect.void,
+    })
+  })
+}
 
 function writeSkill(dir: string, name: string, description: string) {
   return Effect.promise(() =>

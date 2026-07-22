@@ -642,7 +642,7 @@ export const layer = Layer.effect(
             yield* status.set(ctx.sessionID, { type: "busy" })
             const streamRequestedAt = Date.now()
             const stream = llm.stream(streamInput)
-            const observed = { firstEvent: false, firstDelta: false }
+            const observed = { firstEvent: false, firstDelta: false, firstReasoningDelta: false, firstTextDelta: false }
             yield* Effect.logInfo("llm stream requested", {
               "session.id": input.sessionID,
               messageID: input.assistantMessage.id,
@@ -669,6 +669,30 @@ export const layer = Layer.effect(
                   if (!observed.firstDelta && isContentDelta(event)) {
                     observed.firstDelta = true
                     yield* Effect.logInfo("llm first content delta", {
+                      "session.id": input.sessionID,
+                      messageID: input.assistantMessage.id,
+                      providerID: streamInput.model.providerID,
+                      modelID: streamInput.model.id,
+                      eventType: event.type,
+                      elapsedMs: Date.now() - startedAt,
+                      sinceStreamRequestedMs: Date.now() - streamRequestedAt,
+                    })
+                  }
+                  if (!observed.firstReasoningDelta && event.type === "reasoning-delta") {
+                    observed.firstReasoningDelta = true
+                    yield* Effect.logInfo("session processor first reasoning delta", {
+                      "session.id": input.sessionID,
+                      messageID: input.assistantMessage.id,
+                      providerID: streamInput.model.providerID,
+                      modelID: streamInput.model.id,
+                      eventType: event.type,
+                      elapsedMs: Date.now() - startedAt,
+                      sinceStreamRequestedMs: Date.now() - streamRequestedAt,
+                    })
+                  }
+                  if (!observed.firstTextDelta && event.type === "text-delta") {
+                    observed.firstTextDelta = true
+                    yield* Effect.logInfo("session processor first text delta", {
                       "session.id": input.sessionID,
                       messageID: input.assistantMessage.id,
                       providerID: streamInput.model.providerID,

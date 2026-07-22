@@ -30,6 +30,7 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
 import { Reference } from "@opencode-ai/core/reference"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
+import { TOOL_SEARCH_TOOL_ID } from "@/tool/tool-search"
 
 export type PromptLanguage = "en" | "zh"
 
@@ -51,6 +52,7 @@ export function provider(model: Provider.Model, language: PromptLanguage = "en")
 
 export interface Interface {
   readonly environment: (model: Provider.Model, language?: PromptLanguage) => Effect.Effect<string[]>
+  readonly toolDiscovery: (agent: Agent.Info, language?: PromptLanguage) => Effect.Effect<string | undefined>
   readonly skills: (agent: Agent.Info, language?: PromptLanguage) => Effect.Effect<string | undefined>
   readonly mcp: (agent: Agent.Info, permission?: PermissionV1.Ruleset) => Effect.Effect<string | undefined>
 }
@@ -61,93 +63,81 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const mcp = yield* MCP.Service
+    const skill = yield* Skill.Service
     const locations = yield* LocationServiceMap.Service
 
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (
-        model: Provider.Model,
+        _model: Provider.Model,
         language: PromptLanguage = "en",
       ) {
         const ctx = yield* InstanceState.context
         const references = yield* Effect.gen(function* () {
           return (yield* (yield* Reference.Service).list()).filter((reference) => reference.description !== undefined)
         }).pipe(Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))))
-        const referenceBlock =
-          references.length === 0
-            ? undefined
-            : [
-                language === "zh"
-                  ? "项目引用提供了相关时可访问的额外目录。"
-                  : "Project references provide additional directories that can be accessed when relevant.",
-                "<available_references>",
-                ...references
-                  .toSorted((a, b) => a.name.localeCompare(b.name))
-                  .flatMap((reference) => [
-                    "  <reference>",
-                    `    <name>${reference.name}</name>`,
-                    `    <path>${reference.path}</path>`,
-                    ...(reference.description === undefined
-                      ? []
-                      : [`    <description>${reference.description}</description>`]),
-                    "  </reference>",
-                  ]),
-                "</available_references>",
-              ].join("\n")
-
-        if (language === "zh")
-          return [
-            [
-              `你正在使用的模型名称是 ${model.api.id}。精确模型 ID 是 ${model.providerID}/${model.api.id}`,
-              `下面是当前环境的有用信息：`,
-              `<env>`,
-              `  当前目录: ${ctx.directory}`,
-              `  工作区根目录: ${ctx.worktree}`,
-              `  当前目录是否为 git repo: ${ctx.project.vcs === "git" ? "yes" : "no"}`,
-              `  平台: ${process.platform}`,
-              `  今天日期: ${new Date().toDateString()}`,
-              `</env>`,
-            ].join("\n"),
-            referenceBlock,
-          ].filter((part): part is string => part !== undefined)
+        if (references.length === 0) return []
 
         return [
           [
-            `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
-            `Here is some useful information about the environment you are running in:`,
-            `<env>`,
-            `  Working directory: ${ctx.directory}`,
-            `  Workspace root folder: ${ctx.worktree}`,
-            `  Is directory a git repo: ${ctx.project.vcs === "git" ? "yes" : "no"}`,
-            `  Platform: ${process.platform}`,
-            `  Today's date: ${new Date().toDateString()}`,
-            `</env>`,
+            language === "zh"
+              ? "## 项目引用"
+              : "## Project References",
+            language === "zh"
+              ? "相关时可以访问以下额外目录："
+              : "These additional directories can be accessed when relevant:",
+            ...references
+              .toSorted((a, b) => a.name.localeCompare(b.name))
+              .flatMap((reference) => [
+                `- ${reference.name}`,
+                `  - path: ${reference.path}`,
+                ...(reference.description === undefined ? [] : [`  - description: ${reference.description}`]),
+              ]),
           ].join("\n"),
-          referenceBlock,
-        ].filter((part): part is string => part !== undefined)
+        ]
+      }),
+
+      toolDiscovery: Effect.fn("SystemPrompt.toolDiscovery")(function* (
+        agent: Agent.Info,
+        language: PromptLanguage = "en",
+      ) {
+        const disabledTools = Permission.disabled([TOOL_SEARCH_TOOL_ID], agent.permission)
+        if (disabledTools.has(TOOL_SEARCH_TOOL_ID)) return
+        return language === "zh"
+          ? [
+              "## 工具发现",
+              "可延迟加载的专用工具大致有：知识库/表格、邮箱/凭据、定时任务、长期记忆等；需要但当前工具列表没有时，先用 `tool_search` 搜索并加载。",
+            ].join("\n")
+          : [
+              "## Tool Discovery",
+              "Deferred specialized tools roughly include knowledge/table queries, email/credentials, scheduled tasks, and long-term memory; if a needed tool is not in the current tool list, use `tool_search` to find and load it.",
+            ].join("\n")
       }),
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, language: PromptLanguage = "en") {
         const disabledTools = Permission.disabled(["skill", "skill_search"], agent.permission)
         if (disabledTools.has("skill")) return
         const searchAllowed = !disabledTools.has("skill_search")
+        const skillIndex = renderSkillIndex(yield* skill.available(agent), language)
 
         if (language === "zh")
           return [
+            "## 专项技能",
             "技能提供面向特定任务的专门指令和工作流。",
+            skillIndex,
             searchAllowed
-              ? "当任务可能需要专门技能时，先调用 `skill_search` 查询当前可用技能。"
+              ? "只用上方索引、用户输入或 `skill_search` 返回的精确 name 调用 `skill`；不确定、索引截断或用户问完整技能/能力清单时先调用 `skill_search`。"
               : "只有用户明确给出精确 skill 名称时，才调用 `skill`。",
-            "不要凭记忆或猜测调用 skill；只有用户明确给出 skill 名称，或 `skill_search` 返回了精确 skill name 后，才调用 `skill`。",
-            "面向用户说明能力时使用自然语言；除非用户明确询问，不要暴露内部 skill 名称。",
+            "面向用户用自然语言概述能力；除非明确询问，不暴露内部 skill name。",
           ].join("\n")
 
         return [
+          "## Specialized Skills",
           "Skills provide specialized instructions and workflows for specific tasks.",
+          skillIndex,
           searchAllowed
-            ? "When a task may need a specialized skill, first call `skill_search` to find currently available skills."
+            ? "Call `skill` only with an exact name from the index above, the user, or `skill_search`; use `skill_search` when unsure, the index is truncated, or the user asks for the full skill/capability list."
             : "Only call `skill` when the user explicitly provides the exact skill name.",
-          "Do not guess skill names. Call `skill` only when the user gave an exact skill name or `skill_search` returned the exact skill name.",
-          "Describe capabilities conversationally to users; do not expose internal skill names unless explicitly asked.",
+          "Describe capabilities naturally; do not expose internal skill names unless asked.",
         ].join("\n")
       }),
 
@@ -159,13 +149,11 @@ export const layer = Layer.effect(
         if (instructions.length === 0) return
 
         return [
-          "<mcp_instructions>",
+          "## MCP Instructions",
           ...instructions.flatMap((item) => [
-            `  <server name="${item.name}">`,
-            ...item.instructions.split("\n").map((line) => `    ${line}`),
-            "  </server>",
+            `### ${item.name}`,
+            ...item.instructions.split("\n").map((line) => line.trim()).filter((line) => line.length > 0),
           ]),
-          "</mcp_instructions>",
         ].join("\n")
       }),
     })
@@ -177,6 +165,43 @@ export const defaultLayer = layer.pipe(
   Layer.provide(MCP.defaultLayer),
   Layer.provide(locationServiceMapLayer),
 )
+
+const SKILL_DESCRIPTION_LIMIT = 160
+
+function renderSkillIndex(skills: Skill.Info[], language: PromptLanguage) {
+  if (skills.length === 0) {
+    return language === "zh" ? "当前没有可用专项技能。" : "No specialized skills are currently available."
+  }
+
+  const shown = skills.toSorted((a, b) => a.name.localeCompare(b.name))
+  const lines = [
+    language === "zh"
+      ? "当前可用专项技能（name + 一行 description；完整说明仅在调用 `skill` 后加载）："
+      : "Available specialized skills (name + one-line description; full instructions are loaded only after calling `skill`):",
+    ...shown.map((skill) => `- ${skill.name}: ${oneLineDescription(skillDescription(skill, language), language)}`),
+  ]
+
+  return lines.join("\n")
+}
+
+function skillDescription(skill: Skill.Info, language: PromptLanguage) {
+  const localized =
+    language === "zh"
+      ? skill.descriptions?.["zh-CN"]
+      : skill.descriptions?.["en-US"]
+  return localized ?? skill.description
+}
+
+function oneLineDescription(description: string | undefined, language: PromptLanguage) {
+  const text =
+    description
+      ?.split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? ""
+  const fallback = language === "zh" ? "无描述。" : "No description provided."
+  if (text.length <= SKILL_DESCRIPTION_LIMIT) return text || fallback
+  return `${text.slice(0, SKILL_DESCRIPTION_LIMIT - 3)}...`
+}
 
 const locationServiceMapNode = LayerNode.make({
   service: LocationServiceMap.Service,

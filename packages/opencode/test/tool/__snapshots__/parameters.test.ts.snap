@@ -302,11 +302,11 @@ exports[`tool parameters JSON Schema (wire shape) skill_search 1`] = `
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "limit": {
-      "description": "Maximum number of matching skills to return. Defaults to 5.",
+      "description": "Maximum number of matching skills to return. Defaults to 20 for searches and 100 for list queries.",
       "type": "number",
     },
     "query": {
-      "description": "Search available skills by intent, capability, or exact name. Use select:<skill_name> for exact names.",
+      "description": "Search available skills by intent, capability, or exact name. Use select:<skill_name> for exact names. Use "list" or the user's capability-list question to list available skills.",
       "type": "string",
     },
   },

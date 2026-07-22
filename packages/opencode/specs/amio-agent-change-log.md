@@ -9,12 +9,21 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Added a model-facing `tool_search` built-in tool so registered custom tools can stay out of the initial provider tool list and be loaded by intent when needed.
 - Marked config/plugin custom tools as deferred by default while keeping built-in tools directly available; custom tools can opt out with `deferLoading: false`.
 - Added session tool selection coverage so a completed `tool_search` result reveals only the matched deferred tools on the next model step.
+- Added concise system guidance telling models to use `tool_search` when a task needs a specialized tool that is not currently in the active tool list, with a category-level hint for common deferred tool areas.
+- Kept web search out of the deferred-tool category hint because Astron Cowork exposes `astron-web-search` directly as an active tool.
 
 ### Skill search prompt routing
 
 - Added a model-facing `skill_search` built-in tool that returns a small set of currently available skill names and descriptions without loading full skill content or local paths.
-- Replaced the full `<available_skills>` system prompt dump with concise instructions to search for skills before calling `skill` by exact name.
+- Replaced the full `<available_skills>` system prompt dump with a lightweight available-skill index containing only each skill name and one-line description; full skill bodies and local paths remain loaded only through `skill`.
 - Updated the `skill` tool description and schema wording so models do not infer skill names from stale prompt memory.
+- Consolidated model-facing skill invocation guidance into the runtime specialized-skills system section so Astron-side assistant boundary prompts can stay short and non-duplicative.
+- Preferred `agents/openai.yaml` `interface.short_description` / localized `short_description` values for skill index descriptions, falling back to `SKILL.md` frontmatter only when UI metadata is absent.
+- Listed every available skill in the lightweight skill index instead of truncating with an omitted-count placeholder.
+
+### First text-delta latency logging
+
+- Split LLM and session-processor stream latency logs into first reasoning delta and first text delta so Astron Cowork can measure visible assistant-body latency separately from hidden reasoning output.
 
 ### Astron Star location prewarm
 
