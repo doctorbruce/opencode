@@ -213,6 +213,30 @@ describe("experimental HttpApi", () => {
     }),
   )
 
+  it.instance("prewarms location services for the routed directory", () =>
+    Effect.gen(function* () {
+      const tmp = yield* TestInstance
+      const response = yield* request(ExperimentalPaths.locationPrewarm, tmp.directory, { method: "POST" })
+
+      expect(response.status).toBe(200)
+      expect(yield* json(response)).toBe(true)
+    }),
+  )
+
+  it.instance("prewarms tool definitions for a provider and model", () =>
+    Effect.gen(function* () {
+      const tmp = yield* TestInstance
+      const response = yield* request(
+        `${ExperimentalPaths.locationPrewarm}?provider=opencode&model=gpt-5&agent=build`,
+        tmp.directory,
+        { method: "POST" },
+      )
+
+      expect(response.status).toBe(200)
+      expect(yield* json(response)).toBe(true)
+    }),
+  )
+
   it.instance(
     "serves Console org switch through the default server app",
     () =>

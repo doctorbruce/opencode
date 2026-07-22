@@ -16,6 +16,11 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Replaced the full `<available_skills>` system prompt dump with concise instructions to search for skills before calling `skill` by exact name.
 - Updated the `skill` tool description and schema wording so models do not infer skill names from stale prompt memory.
 
+### Astron Star location prewarm
+
+- Added `POST /experimental/location/prewarm` so Astron Cowork can materialize the 星小妙 workspace's location-scoped services before the user's first model turn, without creating a session or sending a prompt.
+- Allowed the prewarm endpoint to accept optional `provider`, `model`, and `agent` query parameters and materialize provider/model-specific tool definitions up front, moving first-turn tool registry initialization out of the visible user request path.
+
 ## 2026-07-09
 
 ### Preflight context compaction

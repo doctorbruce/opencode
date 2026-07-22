@@ -59,6 +59,12 @@ export const ToolListQuery = Schema.Struct({
   provider: ProviderV2.ID,
   model: ModelV2.ID,
 })
+export const LocationPrewarmQuery = Schema.Struct({
+  ...WorkspaceRoutingQueryFields,
+  provider: Schema.optional(ProviderV2.ID),
+  model: Schema.optional(ModelV2.ID),
+  agent: Schema.optional(Schema.String),
+})
 
 const WorktreeList = Schema.Array(Schema.String)
 const WorktreeErrorName = Schema.Union([
@@ -94,6 +100,7 @@ export const ExperimentalPaths = {
   consoleSwitch: "/experimental/console/switch",
   tool: "/experimental/tool",
   toolIDs: "/experimental/tool/ids",
+  locationPrewarm: "/experimental/location/prewarm",
   worktree: "/experimental/worktree",
   worktreeReset: "/experimental/worktree/reset",
   session: "/experimental/session",
@@ -171,6 +178,17 @@ export const ExperimentalApi = HttpApi.make("experimental")
             summary: "List tool IDs",
             description:
               "Get a list of all available tool IDs, including both built-in tools and dynamically registered tools.",
+          }),
+        ),
+        HttpApiEndpoint.post("locationPrewarm", ExperimentalPaths.locationPrewarm, {
+          query: LocationPrewarmQuery,
+          success: described(Schema.Boolean, "Location prewarmed"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "experimental.location.prewarm",
+            summary: "Prewarm location",
+            description: "Materialize location-scoped services for the routed workspace without starting a model turn.",
           }),
         ),
         HttpApiEndpoint.get("worktree", ExperimentalPaths.worktree, {
