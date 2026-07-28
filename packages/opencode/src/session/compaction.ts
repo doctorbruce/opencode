@@ -61,10 +61,35 @@ function summaryText(message: SessionV1.WithParts) {
 }
 
 function estimateRequestTokens(value: unknown) {
-  const text = JSON.stringify(value)
+  const text = JSON.stringify(value, function (key, item) {
+    if (item instanceof Uint8Array) return `[Attached binary media: ${item.byteLength} bytes]`
+    if (item instanceof ArrayBuffer) return `[Attached binary media: ${item.byteLength} bytes]`
+    if (typeof item !== "string") return item
+
+    if (item.startsWith("data:")) {
+      const comma = item.indexOf(",")
+      const header = comma === -1 ? item : item.slice(0, comma)
+      if (comma !== -1 && header.includes(";base64")) {
+        const mimeEnd = header.indexOf(";")
+        const mime = mimeEnd === -1 ? "media" : header.slice(5, mimeEnd)
+        return `[Attached ${mime}: ${base64Bytes(item.slice(comma + 1))} bytes]`
+      }
+    }
+
+    if (key !== "data") return item
+    const parent = this as Record<string, unknown>
+    const mime = parent.mediaType ?? parent.media_type
+    if (typeof mime !== "string" && parent.type !== "base64" && parent.type !== "media") return item
+    return `[Attached ${typeof mime === "string" ? mime : "media"}: ${base64Bytes(item)} bytes]`
+  })
   const asciiChars = text.replace(/[^\x00-\x7F]/g, "").length
   const nonAsciiChars = text.length - asciiChars
   return Math.max(Token.estimate(text), Math.ceil(asciiChars / 4) + nonAsciiChars)
+}
+
+function base64Bytes(value: string) {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding)
 }
 
 function completedCompactions(messages: SessionV1.WithParts[]) {
@@ -226,7 +251,7 @@ export const layer = Layer.effect(
       model: Provider.Model
     }) {
       const msgs = yield* MessageV2.toModelMessagesEffect(input.messages, input.model)
-      return Token.estimate(JSON.stringify(msgs))
+      return estimateRequestTokens(msgs)
     })
 
     const select = Effect.fn("SessionCompaction.select")(function* (input: {

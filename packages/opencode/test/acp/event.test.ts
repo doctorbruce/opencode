@@ -126,6 +126,20 @@ function textDelta(sessionID: string, messageID: string, partID: string, delta: 
   }
 }
 
+function toolInputDelta(part: ToolPart, delta: string): Event {
+  return {
+    id: `evt_${part.sessionID}_${part.messageID}_${part.id}_${delta}`,
+    type: "message.part.delta",
+    properties: {
+      sessionID: part.sessionID,
+      messageID: part.messageID,
+      partID: part.id,
+      field: "raw",
+      delta,
+    },
+  }
+}
+
 function messageUpdated(message: SessionMessageResponse): Event {
   return {
     id: `evt_${message.info.sessionID}_${message.info.id}`,
@@ -467,6 +481,39 @@ describe("acp event routing", () => {
 
     expect(harness.calls.message).toBe(1)
     expect(harness.updates).toHaveLength(2)
+  })
+
+  it("streams partial tool JSON as pending ACP tool updates", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_write_stream", cwd: "/workspace" }))
+    const part = {
+      id: "part_write_stream",
+      sessionID: "ses_write_stream",
+      messageID: "msg_write_stream",
+      type: "tool",
+      callID: "call_write_stream",
+      tool: "write",
+      state: { status: "pending", input: {}, raw: "" },
+    } satisfies ToolPart
+
+    await harness.subscription.handle(toolUpdated(part))
+    await harness.subscription.handle(toolInputDelta(part, '{"filePath":"/workspace/demo.ts","content":"const answer'))
+    await harness.subscription.handle(toolInputDelta(part, ' = 42\\n"}'))
+
+    const updates = toolUpdates(harness.updates)
+    expect(updates).toHaveLength(3)
+    expect(updates[1]?.update).toMatchObject({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_write_stream",
+      status: "pending",
+      kind: "edit",
+      rawInput: { filePath: "/workspace/demo.ts", content: "const answer" },
+    })
+    expect(updates[2]?.update).toMatchObject({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call_write_stream",
+      rawInput: { filePath: "/workspace/demo.ts", content: "const answer = 42\n" },
+    })
   })
 
   it("suppresses replayed compaction summary content", async () => {

@@ -279,3 +279,19 @@ bun run script/build.ts --single --amio-agent --skip-install
 
 - Changed ACP `usage_update.used` to report the latest assistant message's total context tokens, preferring `tokens.total` and otherwise summing input, output, reasoning, and cache tokens.
 - This aligns Astron context-window display with Codex-style current-window usage instead of reporting only non-cached input plus cache read tokens.
+
+## 2026-07-27
+
+### Bounded PDF reads
+
+- Added Claude Code-style PDF page ranges to the `Read` tool through the optional `pages` parameter.
+- PDFs longer than 10 pages now require an explicit range, and each read is limited to 20 pages.
+- Full inline PDF reads are capped at 20 MiB; page extraction accepts source PDFs up to 100 MiB and emits a smaller PDF containing only the selected pages.
+- Added PDF header validation and clear tool-level errors for invalid ranges, oversized files, and oversized extracted page sets.
+- Prompt token estimation now replaces base64 media payloads with bounded metadata placeholders instead of counting encoded binary bytes as ordinary text tokens.
+- Added focused regression coverage for small PDFs, required pagination, page extraction, full-file size limits, and media-aware prompt overflow estimation.
+
+### Streaming Write previews over ACP
+
+- Forwarded incremental tool input JSON through transient `message.part.delta` events without executing or persisting partial tool calls.
+- The ACP adapter now parses valid partial tool input and emits pending `tool_call_update` payloads so external clients can render Write content while it is generated.

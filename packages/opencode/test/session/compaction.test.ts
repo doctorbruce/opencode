@@ -585,6 +585,32 @@ describe("session.compaction.isOverflow", () => {
   )
 })
 
+describe("session.compaction.isPromptOverflow", () => {
+  it.live(
+    "does not count base64 PDF payload bytes as text tokens",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const compact = yield* SessionCompaction.Service
+        const model = createModel({ context: 100_000, output: 32_000 })
+        const data = `data:application/pdf;base64,${"A".repeat(400_000)}`
+
+        expect(
+          yield* compact.isPromptOverflow({
+            system: [],
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "file", data, mediaType: "application/pdf" }],
+              },
+            ],
+            model,
+          }),
+        ).toBe(false)
+      }),
+    ),
+  )
+})
+
 describe("session.compaction.create", () => {
   it.live(
     "creates a compaction user message and part",

@@ -17,6 +17,10 @@ const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
 const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const PDF_INLINE_MAX_BYTES = 20 * 1024 * 1024
+const PDF_EXTRACT_MAX_BYTES = 100 * 1024 * 1024
+const PDF_INLINE_MAX_PAGES = 10
+const PDF_MAX_PAGES_PER_READ = 20
 
 class ReadStop extends Schema.TaggedErrorClass<ReadStop>()("ReadStop", {}) {}
 
@@ -32,6 +36,9 @@ export const Parameters = Schema.Struct({
   }),
   limit: Schema.optional(NonNegativeInt).annotate({
     description: "The maximum number of lines to read (defaults to 2000)",
+  }),
+  pages: Schema.optional(Schema.String).annotate({
+    description: `Page range for PDF files, for example "1-5" or "3". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.`,
   }),
 })
 
@@ -59,6 +66,25 @@ type Metadata = {
   truncated: boolean
   loaded: string[]
   display?: Display
+  pdf?: {
+    originalSize: number
+    pageCount: number
+    pages?: { first: number; last: number }
+  }
+}
+
+function parsePdfPages(value: string) {
+  const match = /^(\d+)(?:-(\d+))?$/.exec(value.trim())
+  if (!match) return undefined
+  const first = Number(match[1])
+  const last = Number(match[2] ?? match[1])
+  if (first < 1 || last < first) return undefined
+  return { first, last }
+}
+
+function formatBytes(value: number) {
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(2)} MiB`
+  return `${Math.ceil(value / 1024)} KiB`
 }
 
 export const ReadTool = Tool.define<
@@ -306,9 +332,13 @@ export const ReadTool = Tool.define<
       const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
 
-      if (isImage || isPdfAttachment(mime)) {
+      if (params.pages && !isPdfAttachment(mime)) {
+        return yield* Effect.fail(new Error("The pages parameter is only supported for PDF files"))
+      }
+
+      if (isImage) {
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        const msg = "Image read successfully"
         return {
           title,
           output: msg,
@@ -322,6 +352,107 @@ export const ReadTool = Tool.define<
               type: "file" as const,
               mime,
               url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+            },
+          ],
+        }
+      }
+
+      if (isPdfAttachment(mime)) {
+        const originalSize = Number(stat.size)
+        const requested = params.pages ? parsePdfPages(params.pages) : undefined
+        if (params.pages && !requested) {
+          return yield* Effect.fail(
+            new Error(`Invalid pages parameter: "${params.pages}". Use formats like "1-5" or "3".`),
+          )
+        }
+        if (requested && requested.last - requested.first + 1 > PDF_MAX_PAGES_PER_READ) {
+          return yield* Effect.fail(
+            new Error(
+              `Page range "${params.pages}" exceeds the maximum of ${PDF_MAX_PAGES_PER_READ} pages per request. Use a smaller range.`,
+            ),
+          )
+        }
+        if (originalSize > PDF_EXTRACT_MAX_BYTES) {
+          return yield* Effect.fail(
+            new Error(
+              `PDF file is ${formatBytes(originalSize)}, exceeding the maximum supported size of ${formatBytes(PDF_EXTRACT_MAX_BYTES)}.`,
+            ),
+          )
+        }
+        if (!requested && originalSize > PDF_INLINE_MAX_BYTES) {
+          return yield* Effect.fail(
+            new Error(
+              `PDF file is ${formatBytes(originalSize)}, too large to read at once. Use the pages parameter to read at most ${PDF_MAX_PAGES_PER_READ} pages per request, for example pages="1-5".`,
+            ),
+          )
+        }
+
+        const bytes = yield* fs.readFile(filepath)
+        if (new TextDecoder("ascii").decode(bytes.subarray(0, 5)) !== "%PDF-") {
+          return yield* Effect.fail(new Error(`File is not a valid PDF (missing %PDF- header): ${filepath}`))
+        }
+
+        const pdfLib = yield* Effect.promise(() => import("pdf-lib"))
+        const document = yield* Effect.tryPromise({
+          try: () => pdfLib.PDFDocument.load(bytes, { updateMetadata: false }),
+          catch: (cause) => new Error(`Failed to parse PDF ${filepath}: ${String(cause)}`),
+        })
+        const pageCount = document.getPageCount()
+        if (!requested && pageCount > PDF_INLINE_MAX_PAGES) {
+          return yield* Effect.fail(
+            new Error(
+              `This PDF has ${pageCount} pages, which is too many to read at once. Use the pages parameter to read specific page ranges, for example pages="1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.`,
+            ),
+          )
+        }
+        if (requested && requested.last > pageCount) {
+          return yield* Effect.fail(
+            new Error(`Page range "${params.pages}" exceeds the PDF page count of ${pageCount}.`),
+          )
+        }
+
+        const selected = requested
+          ? yield* Effect.tryPromise({
+              try: async () => {
+                const output = await pdfLib.PDFDocument.create()
+                const pages = await output.copyPages(
+                  document,
+                  Array.from({ length: requested.last - requested.first + 1 }, (_, i) => requested.first + i - 1),
+                )
+                pages.forEach((page) => output.addPage(page))
+                return output.save()
+              },
+              catch: (cause) => new Error(`Failed to extract PDF pages ${params.pages}: ${String(cause)}`),
+            })
+          : bytes
+        if (selected.byteLength > PDF_INLINE_MAX_BYTES) {
+          return yield* Effect.fail(
+            new Error(
+              `Selected PDF pages are ${formatBytes(selected.byteLength)}, too large for one request. Use a smaller page range.`,
+            ),
+          )
+        }
+
+        const pageLabel = requested ? `${requested.first}-${requested.last}` : `1-${pageCount}`
+        const msg = `PDF pages ${pageLabel} of ${pageCount} read successfully (${formatBytes(selected.byteLength)})`
+        return {
+          title,
+          output: msg,
+          metadata: {
+            preview: msg,
+            truncated: Boolean(requested && (requested.first > 1 || requested.last < pageCount)),
+            loaded: loaded.map((item) => item.filepath),
+            pdf: {
+              originalSize,
+              pageCount,
+              ...(requested ? { pages: requested } : {}),
+            },
+          },
+          attachments: [
+            {
+              type: "file" as const,
+              mime,
+              url: `data:${mime};base64,${Buffer.from(selected).toString("base64")}`,
             },
           ],
         }

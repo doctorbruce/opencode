@@ -9,6 +9,7 @@ import type {
   ToolPart,
 } from "@opencode-ai/sdk/v2"
 import { Effect } from "effect"
+import { parse } from "partial-json"
 import { ACPSession } from "./session"
 import { ACPPermission } from "./permission"
 import { partsToContentChunks, type ReplayPart } from "./content"
@@ -32,6 +33,15 @@ type GlobalEventStream = {
 type EventMessageUpdated = Extract<Event, { type: "message.updated" }>
 type EventSessionCompactionStarted = Extract<Event, { type: "session.compaction.started" }>
 type EventSessionCompacted = Extract<Event, { type: "session.compacted" }>
+type StreamingToolInput = {
+  sessionId: string
+  messageId: string
+  partId: string
+  toolCallId: string
+  toolName: string
+  cwd: string
+  raw: string
+}
 
 export function start(input: { sdk: OpencodeClient; connection: Connection; session: ACPSession.Interface }) {
   const subscription = new Subscription(input)
@@ -44,6 +54,7 @@ export class Subscription {
   private readonly hiddenMessages = new Set<string>()
   private readonly shellSnapshots = new Map<string, string>()
   private readonly toolStarts = new Set<string>()
+  private readonly streamingToolInputs = new Map<string, StreamingToolInput>()
   private readonly permission: ACPPermission.Handler
   private started = false
 
@@ -179,6 +190,30 @@ export class Subscription {
     if (!session) return
     if (this.isHiddenMessage(session.id, props.messageID)) return
 
+    if (props.field === "raw") {
+      const tool = this.streamingToolInputs.get(props.partID)
+      if (tool && tool.sessionId === session.id && tool.messageId === props.messageID) {
+        tool.raw += props.delta
+        const input = partialToolInput(tool.raw)
+        if (!input) return
+        const identity = { messageId: tool.messageId, partId: tool.partId }
+        await this.input.connection.sessionUpdate({
+          sessionId: session.id,
+          update: {
+            sessionUpdate: "tool_call_update",
+            ...identity,
+            ...pendingToolCall({
+              toolCallId: tool.toolCallId,
+              toolName: tool.toolName,
+              state: { input },
+              cwd: tool.cwd,
+            }),
+          },
+        })
+        return
+      }
+    }
+
     const known = await Effect.runPromise(
       this.input.session.tryGetPartMetadata({
         sessionId: session.id,
@@ -279,6 +314,20 @@ export class Subscription {
   }
 
   private async handleToolPart(sessionId: string, part: ToolPart, cwd: string) {
+    if (part.state.status === "pending") {
+      const previous = this.streamingToolInputs.get(part.id)
+      this.streamingToolInputs.set(part.id, {
+        sessionId,
+        messageId: part.messageID,
+        partId: part.id,
+        toolCallId: part.callID,
+        toolName: part.tool,
+        cwd,
+        raw: part.state.raw || previous?.raw || "",
+      })
+    } else {
+      this.streamingToolInputs.delete(part.id)
+    }
     await this.toolStart(sessionId, part, cwd)
 
     switch (part.state.status) {
@@ -394,6 +443,9 @@ export class Subscription {
   private clearTool(toolCallId: string) {
     this.toolStarts.delete(toolCallId)
     this.shellSnapshots.delete(toolCallId)
+    for (const [partId, tool] of this.streamingToolInputs) {
+      if (tool.toolCallId === toolCallId) this.streamingToolInputs.delete(partId)
+    }
   }
 
   private isHiddenMessage(sessionId: string, messageId: string) {
@@ -414,6 +466,20 @@ function isHiddenAssistantInfo(info: SessionMessageResponse["info"]) {
 
 function messageMetadataKey(sessionId: string, messageId: string) {
   return `${sessionId}:${messageId}`
+}
+
+function partialToolInput(raw: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = parse(raw)
+    if (!isRecord(value) || Object.keys(value).length === 0) return undefined
+    return value
+  } catch {
+    return undefined
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
 export * as ACPEvent from "./event"

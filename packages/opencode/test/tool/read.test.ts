@@ -17,6 +17,7 @@ import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "@/tool/truncate"
 import { Tool } from "@/tool/tool"
 import { Filesystem } from "@/util/filesystem"
+import { PDFDocument } from "pdf-lib"
 import {
   disposeAllInstances,
   provideInstance,
@@ -127,6 +128,12 @@ const put = Effect.fn("ReadToolTest.put")(function* (p: string, content: string 
   const fs = yield* FSUtil.Service
   yield* fs.writeWithDirs(p, content)
 })
+const pdf = (pages: number) =>
+  Effect.promise(async () => {
+    const document = await PDFDocument.create()
+    Array.from({ length: pages }, () => document.addPage([612, 792]))
+    return document.save()
+  })
 const load = Effect.fn("ReadToolTest.load")(function* (p: string) {
   const fs = yield* FSUtil.Service
   return yield* fs.readFileString(p)
@@ -521,6 +528,67 @@ describe("tool.read truncation", () => {
       expect(result.attachments?.[0]).not.toHaveProperty("id")
       expect(result.attachments?.[0]).not.toHaveProperty("sessionID")
       expect(result.attachments?.[0]).not.toHaveProperty("messageID")
+    }),
+  )
+
+  it.live("reads a small PDF as one attachment", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const filepath = path.join(dir, "small.pdf")
+      yield* put(filepath, yield* pdf(3))
+
+      const result = yield* exec(dir, { filePath: filepath })
+      expect(result.output).toContain("PDF pages 1-3 of 3 read successfully")
+      expect(result.metadata).toMatchObject({
+        truncated: false,
+        pdf: { pageCount: 3 },
+      })
+      expect(result.attachments?.[0].mime).toBe("application/pdf")
+    }),
+  )
+
+  it.live("requires pages for PDFs longer than 10 pages", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const filepath = path.join(dir, "long.pdf")
+      yield* put(filepath, yield* pdf(11))
+
+      const err = yield* fail(dir, { filePath: filepath })
+      expect(err.message).toContain("This PDF has 11 pages")
+      expect(err.message).toContain('pages="1-5"')
+    }),
+  )
+
+  it.live("rejects oversized PDFs before parsing or encoding them", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const filepath = path.join(dir, "oversized.pdf")
+      const bytes = Buffer.alloc(20 * 1024 * 1024 + 1)
+      bytes.write("%PDF-", 0, "ascii")
+      yield* put(filepath, bytes)
+
+      const err = yield* fail(dir, { filePath: filepath })
+      expect(err.message).toContain("too large to read at once")
+      expect(err.message).toContain('pages="1-5"')
+    }),
+  )
+
+  it.live("extracts only the requested PDF pages", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const filepath = path.join(dir, "long.pdf")
+      yield* put(filepath, yield* pdf(12))
+
+      const result = yield* exec(dir, { filePath: filepath, pages: "2-4" })
+      expect(result.output).toContain("PDF pages 2-4 of 12 read successfully")
+      expect(result.metadata).toMatchObject({
+        truncated: true,
+        pdf: { pageCount: 12, pages: { first: 2, last: 4 } },
+      })
+      const encoded = result.attachments?.[0].url.split(",", 2)[1]
+      expect(encoded).toBeDefined()
+      const extracted = yield* Effect.promise(() => PDFDocument.load(Buffer.from(encoded!, "base64")))
+      expect(extracted.getPageCount()).toBe(3)
     }),
   )
 
