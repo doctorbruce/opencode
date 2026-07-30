@@ -79,7 +79,7 @@ function search(tools: DeferredToolInfo[], query: string) {
     return tools.filter((tool) => requested.has(tool.id.toLowerCase()))
   }
 
-  const terms = normalized.split(/\s+/).filter(Boolean)
+  const terms = Array.from(new Set(normalized.match(/[a-z0-9][a-z0-9_-]*|[\p{Script=Han}]+/gu) ?? []))
   if (terms.length === 0) return tools
 
   return tools
@@ -92,10 +92,7 @@ function search(tools: DeferredToolInfo[], query: string) {
 function score(tool: DeferredToolInfo, terms: string[]) {
   const id = tool.id.toLowerCase()
   const text = `${id} ${tool.description.toLowerCase()}`
-  if (terms.every((term) => text.includes(term))) {
-    return terms.reduce((sum, term) => sum + (id.includes(term) ? 3 : 1), 0)
-  }
-  return 0
+  return terms.reduce((sum, term) => sum + (id.includes(term) ? 4 : text.includes(term) ? 1 : 0), 0)
 }
 
 function limit(value: number | undefined) {

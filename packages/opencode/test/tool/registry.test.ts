@@ -6,6 +6,7 @@ import { Effect, Layer, Result, Schema } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ToolRegistry } from "@/tool/registry"
 import { Tool } from "@/tool/tool"
+import { ToolSearchTool } from "@/tool/tool-search"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { TestConfig } from "../fixture/config"
@@ -77,6 +78,46 @@ describe("tool.registry", () => {
       const ids = yield* registry.ids()
 
       expect(ids).toContain("skill_search")
+    }),
+  )
+
+  it.instance("finds deferred scheduled-task tools from mixed broad queries", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const tool = (yield* registry.all()).find((item) => item.id === ToolSearchTool.id)
+      if (!tool) throw new Error("tool_search not found")
+
+      const deferredTools = [
+        {
+          id: "ai-scheduled-task-write",
+          description:
+            "AI 计划任务写入类工具。用户提到计划任务、定时任务、周期任务、schedule、cron、定时执行或定期检查时优先使用。计划任务只是调度壳。",
+        },
+        { id: "search-knowledge", description: "搜索企业知识库。" },
+      ]
+
+      for (const query of [
+        "定时任务 定时器 调度 schedule cron",
+        "schedule trigger cron automation workflow planner job",
+        "rpa 定时 自动化 触发器 周期 每日",
+      ]) {
+        const result = yield* tool.execute(
+          { query },
+          {
+            sessionID: SessionID.make("ses_tool_search"),
+            messageID: MessageID.make("msg_tool_search"),
+            callID: "call_tool_search",
+            agent: "build",
+            abort: AbortSignal.any([]),
+            messages: [],
+            extra: { deferredTools },
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.metadata.tools).toContain("ai-scheduled-task-write")
+      }
     }),
   )
 

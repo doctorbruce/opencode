@@ -7,7 +7,6 @@ import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Config } from "@/config/config"
 import { ConfigManaged } from "@/config/managed"
 import { ConfigParse } from "../../src/config/parse"
-import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 
 import { InstanceRef } from "../../src/effect/instance-ref"
 import type { InstanceContext } from "../../src/project/instance-context"
@@ -39,14 +38,11 @@ import { ConfigPlugin } from "@/config/plugin"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { AccountTest } from "../fake/account"
 import { AuthTest } from "../fake/auth"
-import { NpmTest } from "../fake/npm"
 
 /** Infra layer that provides FileSystem, Path, ChildProcessSpawner for test fixtures */
 const infra = CrossSpawnSpawner.defaultLayer.pipe(
   Layer.provideMerge(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
 )
-
-const testFlock = EffectFlock.defaultLayer
 
 const unexpectedHttp = HttpClient.make((request) =>
   Effect.die(`unexpected http request: ${request.method} ${request.url}`),
@@ -105,12 +101,10 @@ const configLayer = (
   } = {},
 ) =>
   Config.layer.pipe(
-    Layer.provide(testFlock),
     Layer.provide(Env.defaultLayer),
     Layer.provide(options.auth ?? AuthTest.empty),
     Layer.provide(options.account ?? AccountTest.empty),
     Layer.provideMerge(infra),
-    Layer.provide(NpmTest.noop),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, options.client ?? unexpectedHttp)),
     Layer.provideMerge(FSUtil.defaultLayer),
   )
@@ -919,7 +913,7 @@ it.instance("gets config directories", () =>
   }),
 )
 
-it.effect("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR", () =>
+it.effect("loads a read-only OPENCODE_CONFIG_DIR without writing dependency artifacts", () =>
   Effect.gen(function* () {
     if (process.platform === "win32") return
 
@@ -933,27 +927,20 @@ it.effect("does not try to install dependencies in read-only OPENCODE_CONFIG_DIR
   }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(CrossSpawnSpawner.defaultLayer)),
 )
 
-it.effect("installs dependencies in writable OPENCODE_CONFIG_DIR", () =>
+it.effect("does not write dependency artifacts in writable OPENCODE_CONFIG_DIR", () =>
   Effect.gen(function* () {
     const dir = yield* tmpdirScoped()
     const configDir = path.join(dir, "configdir")
     yield* FSUtil.use.ensureDir(configDir)
 
-    yield* withProcessEnv(
-      "OPENCODE_CONFIG_DIR",
-      configDir,
-      Config.Service.use((svc) => svc.get().pipe(Effect.andThen(svc.waitForDependencies()))).pipe(
-        provideInstanceEffect(dir),
-      ),
-    )
+    yield* withProcessEnv("OPENCODE_CONFIG_DIR", configDir, Config.use.get().pipe(provideInstanceEffect(dir)))
 
-    expect(yield* FSUtil.use.readFileString(path.join(configDir, ".gitignore"))).toContain("package-lock.json")
+    expect(yield* FSUtil.use.existsSafe(path.join(configDir, ".gitignore"))).toBe(false)
+    expect(yield* FSUtil.use.existsSafe(path.join(configDir, "package.json"))).toBe(false)
+    expect(yield* FSUtil.use.existsSafe(path.join(configDir, "package-lock.json"))).toBe(false)
+    expect(yield* FSUtil.use.existsSafe(path.join(configDir, "node_modules"))).toBe(false)
   }).pipe(Effect.provide(testInstanceStoreLayer), Effect.provide(CrossSpawnSpawner.defaultLayer)),
 )
-
-// Note: deduplication and serialization of npm installs is now handled by the
-// core Npm.Service (via EffectFlock). Those behaviors are tested in the core
-// package's npm tests, not here.
 
 it.instance("resolves scoped npm plugins in config", () =>
   Effect.gen(function* () {
@@ -1549,13 +1536,11 @@ test("remote well-known config can use FetchHttpClient layer", async () => {
       Effect.provide(
         Layer.mergeAll(
           Config.layer.pipe(
-            Layer.provide(testFlock),
             Layer.provide(FSUtil.defaultLayer),
             Layer.provide(Env.defaultLayer),
             Layer.provide(wellKnownAuth(server.url.origin)),
             Layer.provide(AccountTest.empty),
             Layer.provideMerge(infra),
-            Layer.provide(NpmTest.noop),
             Layer.provide(FetchHttpClient.layer),
           ),
           testInstanceStoreLayer,

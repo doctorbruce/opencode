@@ -2,6 +2,25 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-07-30
+
+### Deferred tool search recall
+
+- Changed `tool_search` from all-terms matching to relevance scoring across tool IDs and descriptions so broad mixed-language intent queries can still discover the appropriate deferred tools.
+- Added regression coverage for scheduled-task searches that combine Chinese intent words with `schedule`, `cron`, automation, and workflow terms.
+
+## 2026-07-29
+
+### Offline config plugin runtime
+
+- Removed config-directory dependency installation so the packaged Amio Agent never tries to fetch `@opencode-ai/plugin` while loading a workspace.
+- Removed plugin and custom-tool waits for those background installs; external file plugins and tools continue to load through the bundled plugin runtime without local `node_modules`.
+- Stopped writing dependency-only `.gitignore`, `package.json`, lockfile, and `node_modules` artifacts into config directories during runtime initialization.
+
+### Offline model catalog
+
+- Disabled runtime `models.dev` refreshes for the Amio Agent binary while retaining the model catalog snapshot embedded at build time as a local fallback.
+
 ## 2026-07-21
 
 ### Deferred custom tool loading

@@ -11,16 +11,14 @@ import { Flag } from "@opencode-ai/core/flag/flag"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { applyEdits, modify } from "jsonc-parser"
-import { InstallationLocal, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { existsSync } from "fs"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
+import { Context, Duration, Effect, Layer, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { RemoteAuthError } from "@opencode-ai/core/v1/config/error"
@@ -33,7 +31,6 @@ import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
 import { ConfigPlugin } from "./plugin"
 import { ConfigVariable } from "./variable"
-import { Npm } from "@opencode-ai/core/npm"
 import { withTransientReadRetry } from "@/util/effect-http-client"
 
 // Custom merge function that concatenates array fields instead of replacing them
@@ -117,7 +114,6 @@ type Info = ConfigV1.Info & {
 type State = {
   config: Info
   directories: string[]
-  deps: Fiber.Fiber<void>[]
   consoleState: ConsoleState
 }
 
@@ -130,7 +126,6 @@ export interface Interface {
   readonly reload: () => Effect.Effect<Info>
   readonly invalidate: () => Effect.Effect<void>
   readonly directories: () => Effect.Effect<string[]>
-  readonly waitForDependencies: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
@@ -180,7 +175,6 @@ export const layer = Layer.effect(
     const authSvc = yield* Auth.Service
     const accountSvc = yield* Account.Service
     const env = yield* Env.Service
-    const npmSvc = yield* Npm.Service
     const http = yield* HttpClient.HttpClient
 
     const readConfigFile = (filepath: string) => fs.readFileStringSafe(filepath).pipe(Effect.orDie)
@@ -293,24 +287,6 @@ export const layer = Layer.effect(
       return yield* cachedGlobal
     })
 
-    const ensureGitignore = Effect.fn("Config.ensureGitignore")(function* (dir: string) {
-      const gitignore = path.join(dir, ".gitignore")
-      const hasIgnore = yield* fs.existsSafe(gitignore)
-      if (!hasIgnore) {
-        yield* fs
-          .writeFileString(
-            gitignore,
-            ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore"].join("\n"),
-          )
-          .pipe(
-            Effect.catchIf(
-              (e) => e.reason._tag === "PermissionDenied",
-              () => Effect.void,
-            ),
-          )
-      }
-    })
-
     const loadInstanceState = Effect.fn("Config.loadInstanceState")(
       function* (ctx: InstanceContext) {
         const auth = yield* authSvc.all().pipe(Effect.orDie)
@@ -419,8 +395,6 @@ export const layer = Layer.effect(
           yield* Effect.logDebug("loading config from OPENCODE_CONFIG_DIR", { path: Flag.OPENCODE_CONFIG_DIR })
         }
 
-        const deps: Fiber.Fiber<void>[] = []
-
         for (const dir of directories) {
           if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
             for (const file of ["opencode.json", "opencode.jsonc"]) {
@@ -432,29 +406,6 @@ export const layer = Layer.effect(
               result.plugin ??= []
             }
           }
-
-          yield* ensureGitignore(dir).pipe(Effect.orDie)
-
-          const dep = yield* npmSvc
-            .install(dir, {
-              add: [
-                {
-                  name: "@opencode-ai/plugin",
-                  version: InstallationLocal ? undefined : InstallationVersion,
-                },
-              ],
-            })
-            .pipe(
-              Effect.exit,
-              Effect.tap((exit) =>
-                Exit.isFailure(exit)
-                  ? Effect.logWarning("background dependency install failed", { dir, error: String(exit.cause) })
-                  : Effect.void,
-              ),
-              Effect.asVoid,
-              Effect.forkDetach,
-            )
-          deps.push(dep)
 
           result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => ConfigCommand.load(dir)))
           result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.load(dir)))
@@ -586,7 +537,6 @@ export const layer = Layer.effect(
         return {
           config: result,
           directories,
-          deps,
           consoleState: {
             consoleManagedProviders: Array.from(consoleManagedProviders),
             activeOrgName,
@@ -613,12 +563,6 @@ export const layer = Layer.effect(
 
     const getConsoleState = Effect.fn("Config.getConsoleState")(function* () {
       return yield* InstanceState.use(state, (s) => s.consoleState)
-    })
-
-    const waitForDependencies = Effect.fn("Config.waitForDependencies")(function* () {
-      yield* InstanceState.useEffect(state, (s) =>
-        Effect.forEach(s.deps, Fiber.join, { concurrency: "unbounded" }).pipe(Effect.asVoid),
-      )
     })
 
     const update = Effect.fn("Config.update")(function* (config: Info) {
@@ -674,25 +618,22 @@ export const layer = Layer.effect(
       reload,
       invalidate,
       directories,
-      waitForDependencies,
     })
   }),
 )
 
 export const defaultLayer = layer.pipe(
-  Layer.provide(EffectFlock.defaultLayer),
   Layer.provide(FSUtil.defaultLayer),
   Layer.provide(Env.defaultLayer),
   Layer.provide(Auth.defaultLayer),
   Layer.provide(Account.defaultLayer),
-  Layer.provide(Npm.defaultLayer),
   Layer.provide(FetchHttpClient.layer),
 )
 
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [FSUtil.node, Auth.node, Account.node, Env.node, Npm.node, httpClient],
+  deps: [FSUtil.node, Auth.node, Account.node, Env.node, httpClient],
 })
 
 export * as Config from "./config"
