@@ -422,6 +422,32 @@ description: A skill in the .agents/skills directory.
     ),
   )
 
+  it.live("uses a Chinese frontmatter name as the runtime skill ID", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".agents", "skills", "contract-review", "SKILL.md"),
+              `---
+name: 合同审查
+description: 审查合同内容。
+---
+
+# 合同审查
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const item = yield* skill.get("合同审查")
+          expect(item?.name).toBe("合同审查")
+          expect(item?.location).toContain(path.join(".agents", "skills", "contract-review", "SKILL.md"))
+        }),
+      { git: true },
+    ),
+  )
+
   it.live("discovers global skills from ~/.agents/skills/ directory", () =>
     Effect.gen(function* () {
       const tmp = yield* Effect.acquireRelease(

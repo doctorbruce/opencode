@@ -2,6 +2,14 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-08-07
+
+### Unicode skill IDs
+
+- Corrected the built-in skill authoring guidance to describe the runtime's existing Unicode support: `SKILL.md` frontmatter `name` is the skill ID and may contain Chinese characters.
+- Clarified that the containing folder is a safe discovery path segment and does not define or constrain the runtime skill ID.
+- Added discovery regression coverage proving a Chinese frontmatter name remains the exact runtime lookup key even when the containing folder has a different safe name.
+
 ## 2026-07-30
 
 ### Deferred tool search recall
