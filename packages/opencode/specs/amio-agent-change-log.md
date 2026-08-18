@@ -10,13 +10,48 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Materialized host-owned Effect tool schemas into JSON Schema before invoking `tool.definition` hooks and added the optional `jsonSchema` field to the public plugin hook contract.
 - Added regression coverage for built-in registration, schema extension, result metadata, running-part updates, and fast-tool terminal-state restoration.
 
+## 2026-08-17
+
+### Chronological legacy Session behavior across ID rollover
+
+- Stopped the legacy `SessionPrompt` loop from treating lexicographically larger historical message IDs as newer than post-rollover user input.
+- Made message selection and pending-task/reminder boundaries use `time.created`, with IDs retained only as same-millisecond tie-breakers, and required a completed assistant to reference the latest user through `parentID` before exiting the loop.
+- Made Session forks and revert cleanup/range selection follow persisted chronology or exact message identity instead of ID ordering.
+- Added regression coverage proving post-rollover prompts still call the model, forks retain the correct prefix, and revert cleanup keeps earlier history.
+
+## 2026-08-11
+
+### Lazy process-wide runtime config invalidation
+
+- Added `POST /global/config/invalidate` so Astron can publish one process-wide config epoch without enumerating workspace directories or eagerly creating cold runtime instances.
+- Made instance HTTP requests adopt the current epoch on first load and lazily refresh cached Config, Agent, and Skill state when an already-loaded directory is stale.
+- Added per-directory single-flight refresh semantics so concurrent requests share one refresh, different directories remain independent, cancelled waiters do not cancel shared work, failed refreshes remain retryable, and epoch changes during refresh are followed through to the latest version.
+- Kept the existing directory-scoped `/config/reload` endpoint as an explicit compatibility refresh boundary.
+- Added focused service and HTTP regression coverage for global invalidation, cold-instance behavior, concurrency, cancellation, retry, and epoch advancement.
+
 ## 2026-08-07
+
+### Chinese skill name search
+
+- Made `skill_search` distinguish Chinese capability-list questions from ordinary searches that merely contain words such as `技能` or `能力`.
+- Added direct matching when a natural-language query contains a complete Chinese skill name, while preserving exact `select:<skill_name>` lookup.
+- Added regression coverage for Chinese skill names in both inventory and natural-language search results.
 
 ### Unicode skill IDs
 
 - Corrected the built-in skill authoring guidance to describe the runtime's existing Unicode support: `SKILL.md` frontmatter `name` is the skill ID and may contain Chinese characters.
 - Clarified that the containing folder is a safe discovery path segment and does not define or constrain the runtime skill ID.
 - Added discovery regression coverage proving a Chinese frontmatter name remains the exact runtime lookup key even when the containing folder has a different safe name.
+
+## 2026-08-06
+
+### Agent Harness design documentation
+
+- Added a narrative design document covering the Amio Agent Harness runtime boundary, prompt lifecycle, workspace routing, dynamic tool and skill loading, plugin runtime, context governance, host protocol, offline startup, and observability.
+
+### Deferred tool discovery index
+
+- Replaced the broad deferred-tool category sentence with a concise tool-family index and explicit guidance for intent search and exact `select:<tool_id>` loading.
 
 ## 2026-07-30
 
