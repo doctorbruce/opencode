@@ -6,6 +6,7 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 import { it } from "../lib/effect"
 import { waitGlobalBusEvent } from "./global-bus"
+import { GlobalPaths } from "../../src/server/routes/instance/httpapi/groups/global"
 
 function app() {
   return Server.Default().app
@@ -30,6 +31,112 @@ afterEach(async () => {
 })
 
 describe("config HttpApi", () => {
+  it.live(
+    "invalidates loaded instances lazily through the global config epoch",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({ config: { formatter: false, lsp: false } })
+
+      const before = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/agent", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+      expect(before.status).toBe(200)
+
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(tmp.path, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            formatter: false,
+            lsp: false,
+            agent: {
+              "epoch-agent": {
+                description: "Agent loaded after global config invalidation.",
+                prompt: "You were refreshed lazily.",
+              },
+            },
+          }),
+        ),
+      )
+
+      const invalidated = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request(GlobalPaths.configInvalidate, {
+            method: "POST",
+          }),
+        ),
+      )
+      expect(invalidated.status).toBe(200)
+      expect(yield* Effect.promise(() => invalidated.json())).toMatchObject({
+        invalidatedInstances: 1,
+        restartRequired: false,
+      })
+
+      const after = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/agent", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+      expect(after.status).toBe(200)
+      expect((yield* Effect.promise(() => after.json())).map((agent: { name: string }) => agent.name)).toContain(
+        "epoch-agent",
+      )
+    }),
+  )
+
+  it.live(
+    "does not create a cold instance during global config invalidation",
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirEffect({
+        config: {
+          formatter: false,
+          lsp: false,
+          agent: {
+            "cold-agent": {
+              description: "Agent loaded by the first cold instance request.",
+              prompt: "You were loaded from the current epoch.",
+            },
+          },
+        },
+      })
+
+      const invalidated = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request(GlobalPaths.configInvalidate, {
+            method: "POST",
+          }),
+        ),
+      )
+      expect(invalidated.status).toBe(200)
+      expect(yield* Effect.promise(() => invalidated.json())).toMatchObject({
+        invalidatedInstances: 0,
+      })
+
+      const response = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/agent", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+      expect(response.status).toBe(200)
+      expect((yield* Effect.promise(() => response.json())).map((agent: { name: string }) => agent.name)).toContain(
+        "cold-agent",
+      )
+    }),
+  )
+
   it.live(
     "serves config update through the default server app",
     Effect.gen(function* () {

@@ -5,7 +5,9 @@ import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/unst
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
 import { Config } from "../../src/config/config"
+import { ConfigRuntime } from "../../src/config/runtime"
 import { Installation } from "../../src/installation"
+import { InstanceStore } from "../../src/project/instance-store"
 import { MoveSession } from "@opencode-ai/core/control-plane/move-session"
 import { ServerAuth } from "../../src/server/auth"
 import { RootHttpApi } from "../../src/server/routes/instance/httpapi/api"
@@ -30,6 +32,16 @@ const apiLayer = HttpRouter.serve(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provide(Layer.mock(Auth.Service)({})),
   Layer.provide(Layer.mock(Config.Service)({})),
+  Layer.provide(
+    Layer.mock(ConfigRuntime.Service)({
+      invalidate: () => Effect.succeed({ epoch: 18 }),
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(InstanceStore.Service)({
+      loadedDirectories: () => Effect.succeed(["/workspace/a", "/workspace/b"]),
+    }),
+  ),
   Layer.provide(Layer.mock(MoveSession.Service)({})),
   Layer.provide(
     Layer.mock(Installation.Service)({
@@ -43,6 +55,19 @@ const apiLayer = HttpRouter.serve(
 const it = testEffect(apiLayer)
 
 describe("global HttpApi", () => {
+  it.live("invalidates runtime config without a directory", () =>
+    Effect.gen(function* () {
+      const response = yield* HttpClient.post(GlobalPaths.configInvalidate)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({
+        epoch: 18,
+        invalidatedInstances: 2,
+        restartRequired: false,
+      })
+    }),
+  )
+
   it.live("upgrades to latest when the request body is omitted", () =>
     Effect.gen(function* () {
       const response = yield* HttpClient.post(GlobalPaths.upgrade)

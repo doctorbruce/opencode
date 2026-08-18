@@ -1,4 +1,5 @@
 import { Config } from "@/config/config"
+import { ConfigRuntime } from "@/config/runtime"
 import { GlobalBus, type GlobalEvent as GlobalBusEvent } from "@/bus/global"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -11,7 +12,8 @@ import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
-import { GlobalUpgradeInput } from "../groups/global"
+import { GlobalConfigInvalidateError, GlobalUpgradeInput } from "../groups/global"
+import { InstanceStore } from "@/project/instance-store"
 
 function eventData(data: unknown): Sse.Event {
   return {
@@ -68,7 +70,9 @@ function eventResponse() {
 export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handlers) =>
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const configRuntime = yield* ConfigRuntime.Service
     const installation = yield* Installation.Service
+    const instances = yield* InstanceStore.Service
     const bridge = yield* EffectBridge.make()
 
     const health = Effect.fn("GlobalHttpApi.health")(function* () {
@@ -87,6 +91,23 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       const result = yield* config.updateGlobal(ctx.payload)
       if (result.changed) bridge.fork(disposeAllInstancesAndEmitGlobalDisposed({ swallowErrors: true }))
       return result.info
+    })
+
+    const configInvalidate = Effect.fn("GlobalHttpApi.configInvalidate")(function* () {
+      const result = yield* configRuntime.invalidate().pipe(
+        Effect.mapError(
+          (error) =>
+            new GlobalConfigInvalidateError({
+              path: error.path,
+              message: error.message,
+            }),
+        ),
+      )
+      return {
+        epoch: result.epoch,
+        invalidatedInstances: (yield* instances.loadedDirectories()).length,
+        restartRequired: false,
+      }
     })
 
     const dispose = Effect.fn("GlobalHttpApi.dispose")(function* () {
@@ -150,6 +171,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       .handleRaw("event", event)
       .handle("configGet", configGet)
       .handle("configUpdate", configUpdate)
+      .handle("configInvalidate", configInvalidate)
       .handle("dispose", dispose)
       .handleRaw("upgrade", upgradeRaw)
   }),

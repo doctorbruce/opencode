@@ -13,6 +13,22 @@ const GlobalHealth = Schema.Struct({
   version: Schema.String,
 })
 
+export const GlobalConfigInvalidateResult = Schema.Struct({
+  epoch: Schema.Int,
+  invalidatedInstances: Schema.Int,
+  restartRequired: Schema.Boolean,
+})
+
+export class GlobalConfigInvalidateError extends Schema.ErrorClass<GlobalConfigInvalidateError>(
+  "GlobalConfigInvalidateError",
+)(
+  {
+    path: Schema.String,
+    message: Schema.String,
+  },
+  { httpApiStatus: 409 },
+) {}
+
 const SyncEventSchemas = EventManifest.Latest.values()
   .flatMap((definition) => {
     if (!definition.durable) return []
@@ -66,6 +82,7 @@ export const GlobalPaths = {
   health: "/global/health",
   event: "/global/event",
   config: "/global/config",
+  configInvalidate: "/global/config/invalidate",
   dispose: "/global/dispose",
   upgrade: "/global/upgrade",
 } as const
@@ -109,6 +126,17 @@ export const GlobalApi = HttpApi.make("global").add(
           identifier: "global.config.update",
           summary: "Update global configuration",
           description: "Update global OpenCode configuration settings and preferences.",
+        }),
+      ),
+      HttpApiEndpoint.post("configInvalidate", GlobalPaths.configInvalidate, {
+        success: described(GlobalConfigInvalidateResult, "Runtime config invalidated"),
+        error: GlobalConfigInvalidateError,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "global.config.invalidate",
+          summary: "Invalidate runtime configuration",
+          description:
+            "Publish a new process-wide configuration epoch so loaded instances refresh lazily on their next request.",
         }),
       ),
       HttpApiEndpoint.post("dispose", GlobalPaths.dispose, {

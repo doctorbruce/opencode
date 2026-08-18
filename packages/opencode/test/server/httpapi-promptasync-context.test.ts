@@ -19,6 +19,7 @@ import { registerAdapter } from "../../src/control-plane/adapters"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import type { WorkspaceAdapter } from "../../src/control-plane/types"
 import { Workspace } from "../../src/control-plane/workspace"
+import { ConfigRuntime } from "../../src/config/runtime"
 import { InstanceRef, WorkspaceRef } from "../../src/effect/instance-ref"
 import { InstanceLayer } from "../../src/project/instance-layer"
 import { Project } from "../../src/project/project"
@@ -65,6 +66,13 @@ const it = testEffect(
 const instanceContextTestLayer = Layer.mergeAll(
   instanceContextLayer,
   workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal)),
+).pipe(
+  Layer.provide(
+    Layer.mock(ConfigRuntime.Service)({
+      currentEpoch: () => Effect.succeed(0),
+      ensure: () => Effect.succeed(0),
+    }),
+  ),
 )
 
 const localAdapter = (directory: string): WorkspaceAdapter => ({

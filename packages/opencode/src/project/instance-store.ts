@@ -20,6 +20,8 @@ export interface LoadInput {
 export interface Interface {
   readonly load: (input: LoadInput) => Effect.Effect<InstanceContext>
   readonly reload: (input: LoadInput) => Effect.Effect<InstanceContext>
+  readonly isLoaded: (directory: string) => Effect.Effect<boolean>
+  readonly loadedDirectories: () => Effect.Effect<string[]>
   readonly dispose: (ctx: InstanceContext) => Effect.Effect<void>
   readonly disposeDirectory: (directory: string) => Effect.Effect<void>
   readonly disposeAll: () => Effect.Effect<void>
@@ -144,6 +146,14 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
       ).pipe(Effect.withSpan("InstanceStore.reload"))
     }
 
+    const isLoaded = Effect.fn("InstanceStore.isLoaded")((input: string) =>
+      Effect.sync(() => cache.has(FSUtil.resolve(input))),
+    )
+
+    const loadedDirectories = Effect.fn("InstanceStore.loadedDirectories")(function* () {
+      return [...cache.keys()]
+    })
+
     const dispose = Effect.fn("InstanceStore.dispose")(function* (ctx: InstanceContext) {
       const entry = cache.get(ctx.directory)
       if (!entry) return yield* disposeContext(ctx)
@@ -194,6 +204,8 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
     return Service.of({
       load,
       reload,
+      isLoaded,
+      loadedDirectories,
       dispose,
       disposeDirectory,
       disposeAll,
