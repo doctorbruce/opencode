@@ -138,6 +138,24 @@ describe("tool.registry", () => {
     }),
   )
 
+  it.instance("loads the built-in presentation plugin for tool definitions", () =>
+    Effect.gen(function* () {
+      const registry = yield* ToolRegistry.Service
+      const agent = yield* Agent.Service
+      const read = (yield* registry.tools({
+        providerID: ProviderV2.ID.opencode,
+        modelID: ModelV2.ID.make("test"),
+        agent: yield* agent.defaultInfo(),
+      })).find((tool) => tool.id === "read")
+
+      expect(read?.jsonSchema).toMatchObject({
+        properties: {
+          astronActivityTitle: { type: "string" },
+        },
+      })
+    }),
+  )
+
   it.instance("loads tools from .opencode/tool (singular)", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance

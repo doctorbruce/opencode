@@ -11,6 +11,7 @@ import type {
   Config as SDKConfig,
 } from "@opencode-ai/sdk"
 import type { Provider as ProviderV2, Model as ModelV2, Auth } from "@opencode-ai/sdk/v2"
+import type { JSONSchema7 } from "@ai-sdk/provider"
 
 import type { BunShell } from "./shell.js"
 import { type ToolDefinition } from "./tool.js"
@@ -329,7 +330,10 @@ export interface Hooks {
     output: { text: string },
   ) => Promise<void>
   /**
-   * Modify tool definitions (description and parameters) sent to LLM
+   * Modify tool definitions sent to the LLM, including their model-facing JSON Schema.
    */
-  "tool.definition"?: (input: { toolID: string }, output: { description: string; parameters: any }) => Promise<void>
+  "tool.definition"?: (
+    input: { toolID: string },
+    output: { description: string; parameters: any; jsonSchema?: JSONSchema7 },
+  ) => Promise<void>
 }

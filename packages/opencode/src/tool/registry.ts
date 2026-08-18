@@ -19,6 +19,7 @@ import { SkillTool } from "./skill"
 import { ToolSearchTool } from "./tool-search"
 import { SkillSearchTool } from "./skill-search"
 import * as Tool from "./tool"
+import { ToolJsonSchema } from "./json-schema"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
 import type { JSONSchema7, JSONSchema7Definition } from "@ai-sdk/provider"
@@ -290,14 +291,15 @@ export const layer = Layer.effect(
       return yield* Effect.forEach(
         filtered,
         Effect.fnUntraced(function* (tool: Tool.Def) {
+          const originalJsonSchema = ToolJsonSchema.fromTool(tool)
           const output = {
             description: tool.description,
             parameters: tool.parameters,
-            jsonSchema: tool.jsonSchema,
+            jsonSchema: originalJsonSchema,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
           const jsonSchema =
-            output.parameters === tool.parameters || output.jsonSchema !== tool.jsonSchema
+            output.parameters === tool.parameters || output.jsonSchema !== originalJsonSchema
               ? output.jsonSchema
               : undefined
           return {

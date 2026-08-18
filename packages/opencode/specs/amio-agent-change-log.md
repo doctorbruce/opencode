@@ -2,6 +2,14 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-08-18
+
+### Built-in Astron tool presentation
+
+- Moved Astron's semantic tool activity title generation, execution-sidecar stripping, and tool-part presentation persistence into a built-in host plugin instead of loading a copied Cowork TypeScript plugin.
+- Materialized host-owned Effect tool schemas into JSON Schema before invoking `tool.definition` hooks and added the optional `jsonSchema` field to the public plugin hook contract.
+- Added regression coverage for built-in registration, schema extension, result metadata, running-part updates, and fast-tool terminal-state restoration.
+
 ## 2026-08-07
 
 ### Unicode skill IDs
