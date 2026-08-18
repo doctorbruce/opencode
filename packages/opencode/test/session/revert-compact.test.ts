@@ -428,6 +428,81 @@ describe("revert + compact workflow", () => {
   )
 
   it.live(
+    "cleanup removes the reverted tail after ascending message IDs wrap",
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const session = yield* Session.Service
+          const revert = yield* SessionRevert.Service
+          const info = yield* session.create({})
+          const oldUserID = MessageID.make("msg_ffffffffe001oldUser")
+          const oldAssistantID = MessageID.make("msg_fffffffff001oldAssistant")
+          const wrappedUserID = MessageID.make("msg_000000000001newUser")
+          const wrappedAssistantID = MessageID.make("msg_000000000002newAssistant")
+          const oldCreated = Date.now() - 2_000
+
+          yield* session.updateMessage({
+            id: oldUserID,
+            role: "user",
+            sessionID: info.id,
+            agent: "default",
+            model: { providerID: ProviderV2.ID.make("openai"), modelID: ModelV2.ID.make("gpt-4") },
+            time: { created: oldCreated },
+          })
+          yield* session.updateMessage({
+            id: oldAssistantID,
+            role: "assistant",
+            sessionID: info.id,
+            mode: "default",
+            agent: "default",
+            path: { cwd: dir, root: dir },
+            cost: 0,
+            tokens,
+            modelID: ModelV2.ID.make("gpt-4"),
+            providerID: ProviderV2.ID.make("openai"),
+            parentID: oldUserID,
+            time: { created: oldCreated + 1 },
+            finish: "end_turn",
+          })
+          yield* session.updateMessage({
+            id: wrappedUserID,
+            role: "user",
+            sessionID: info.id,
+            agent: "default",
+            model: { providerID: ProviderV2.ID.make("openai"), modelID: ModelV2.ID.make("gpt-4") },
+            time: { created: oldCreated + 2 },
+          })
+          yield* session.updateMessage({
+            id: wrappedAssistantID,
+            role: "assistant",
+            sessionID: info.id,
+            mode: "default",
+            agent: "default",
+            path: { cwd: dir, root: dir },
+            cost: 0,
+            tokens,
+            modelID: ModelV2.ID.make("gpt-4"),
+            providerID: ProviderV2.ID.make("openai"),
+            parentID: wrappedUserID,
+            time: { created: oldCreated + 3 },
+            finish: "end_turn",
+          })
+          yield* session.setRevert({
+            sessionID: info.id,
+            revert: { messageID: wrappedUserID },
+            summary: { additions: 0, deletions: 0, files: 0 },
+          })
+
+          yield* revert.cleanup(yield* session.get(info.id))
+
+          const messages = yield* session.messages({ sessionID: info.id })
+          expect(messages.map((message) => message.info.id)).toEqual([oldUserID, oldAssistantID])
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live(
     "cleanup is a no-op when session has no revert state",
     provideTmpdirInstance(
       () =>

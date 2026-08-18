@@ -233,6 +233,59 @@ describe("Session", () => {
     }),
   )
 
+  it.instance("fork stops at the requested message after ascending message IDs wrap", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const created = yield* Effect.acquireRelease(session.create({ title: "wrapped-fork" }), (info) =>
+        session.remove(info.id).pipe(Effect.ignore),
+      )
+      const oldUserID = MessageID.make("msg_ffffffffe001oldUser")
+      const oldAssistantID = MessageID.make("msg_fffffffff001oldAssistant")
+      const wrappedUserID = MessageID.make("msg_000000000001newUser")
+      const oldCreated = Date.now() - 2_000
+
+      yield* session.updateMessage({
+        id: oldUserID,
+        sessionID: created.id,
+        role: "user",
+        time: { created: oldCreated },
+        agent: "build",
+        model: { providerID: "test", modelID: "test" },
+      } as SessionV1.User)
+      yield* session.updateMessage({
+        id: oldAssistantID,
+        sessionID: created.id,
+        role: "assistant",
+        parentID: oldUserID,
+        time: { created: oldCreated + 1 },
+        mode: "build",
+        agent: "build",
+        path: { cwd: "/tmp", root: "/tmp" },
+        cost: 0,
+        tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: "test",
+        providerID: "test",
+        finish: "stop",
+      } as SessionV1.Assistant)
+      yield* session.updateMessage({
+        id: wrappedUserID,
+        sessionID: created.id,
+        role: "user",
+        time: { created: oldCreated + 2 },
+        agent: "build",
+        model: { providerID: "test", modelID: "test" },
+      } as SessionV1.User)
+
+      const forked = yield* Effect.acquireRelease(
+        session.fork({ sessionID: created.id, messageID: wrappedUserID }),
+        (info) => session.remove(info.id).pipe(Effect.ignore),
+      )
+      const messages = yield* session.messages({ sessionID: forked.id })
+
+      expect(messages.map((message) => message.info.role)).toEqual(["user", "assistant"])
+    }),
+  )
+
   it.instance("omits metadata when not provided", () =>
     Effect.gen(function* () {
       const session = yield* SessionNs.Service

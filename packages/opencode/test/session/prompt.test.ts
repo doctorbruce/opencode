@@ -523,6 +523,73 @@ it.instance("loop calls LLM and returns assistant message", () =>
   }),
 )
 
+it.instance("prompt answers a user message created after ascending message IDs wrap", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Wrapped message IDs",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    const oldUserID = MessageID.make("msg_ffffffffe001oldUser")
+    const oldAssistantID = MessageID.make("msg_fffffffff001oldAssistant")
+    const wrappedUserID = MessageID.make("msg_000000000001newUser")
+    const oldCreated = Date.now() - 2_000
+
+    yield* sessions.updateMessage({
+      id: oldUserID,
+      role: "user",
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      time: { created: oldCreated },
+    })
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: oldUserID,
+      sessionID: chat.id,
+      type: "text",
+      text: "old prompt",
+    })
+    yield* sessions.updateMessage({
+      id: oldAssistantID,
+      role: "assistant",
+      parentID: oldUserID,
+      sessionID: chat.id,
+      mode: "build",
+      agent: "build",
+      cost: 0,
+      path: { cwd: "/tmp", root: "/tmp" },
+      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: ref.modelID,
+      providerID: ref.providerID,
+      time: { created: oldCreated + 1 },
+      finish: "stop",
+    })
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: oldAssistantID,
+      sessionID: chat.id,
+      type: "text",
+      text: "old response",
+    })
+
+    yield* llm.text("new response")
+    const result = yield* prompt.prompt({
+      sessionID: chat.id,
+      messageID: wrappedUserID,
+      agent: "build",
+      parts: [{ type: "text", text: "new prompt" }],
+    })
+
+    expect(yield* llm.hits).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.parentID).toBe(wrappedUserID)
+    expect(result.parts.some((part) => part.type === "text" && part.text === "new response")).toBe(true)
+  }),
+)
+
 it.instance("loop compacts before sending an oversized prompt to the provider", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig((url) => {
