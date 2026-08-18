@@ -105,11 +105,21 @@ export const layer = Layer.effect(
         return language === "zh"
           ? [
               "## 工具发现",
-              "可延迟加载的专用工具大致有：知识库/表格、邮箱/凭据、定时任务、长期记忆等；需要但当前工具列表没有时，先用 `tool_search` 搜索并加载。",
+              "以下专用工具已按需收起：",
+              "- `ai-scheduled-task-*`：创建、查询、暂停和删除定时任务",
+              "- `knowledge-*`：检索知识库和表格",
+              "- `email-*`：邮件查询与发送",
+              "- `memory-*`：读取和保存长期记忆",
+              "需要这些能力时，先用 `tool_search` 按需求描述搜索；知道工具名称时可使用 `select:<tool_id>`。",
             ].join("\n")
           : [
               "## Tool Discovery",
-              "Deferred specialized tools roughly include knowledge/table queries, email/credentials, scheduled tasks, and long-term memory; if a needed tool is not in the current tool list, use `tool_search` to find and load it.",
+              "The following specialized tools are deferred until needed:",
+              "- `ai-scheduled-task-*`: create, query, pause, and delete scheduled tasks",
+              "- `knowledge-*`: search knowledge bases and tables",
+              "- `email-*`: query and send email",
+              "- `memory-*`: read and save long-term memory",
+              "When you need these capabilities, search by intent with `tool_search`; if you know the tool name, use `select:<tool_id>`.",
             ].join("\n")
       }),
 

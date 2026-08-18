@@ -87,6 +87,7 @@ describe("tool.skill_search", () => {
       yield* writeSkill(path.join(dir, ".opencode", "skill", "review-skill"), "review-skill", "Review code.")
       yield* writeSkill(path.join(dir, ".opencode", "skill", "deploy-skill"), "deploy-skill", "Deploy releases.")
       yield* writeSkill(path.join(dir, ".opencode", "skill", "docs-skill"), "docs-skill", "Write documentation.")
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "代码审查"), "代码审查", "审查代码变更。")
       yield* useTestHome(dir)
 
       const result = yield* executeSkillSearch({ query: "你有啥技能呀" })
@@ -94,12 +95,29 @@ describe("tool.skill_search", () => {
       expect(result.metadata.skills).toContain("deploy-skill")
       expect(result.metadata.skills).toContain("docs-skill")
       expect(result.metadata.skills).toContain("review-skill")
+      expect(result.metadata.skills).toContain("代码审查")
       expect(result.metadata.total).toBeGreaterThanOrEqual(3)
       expect(result.metadata.truncated).toBe(false)
       expect(result.output).toContain("Available skills:")
       expect(result.output).toContain("deploy-skill")
       expect(result.output).toContain("docs-skill")
       expect(result.output).toContain("review-skill")
+      expect(result.output).toContain("代码审查")
+    }),
+  )
+
+  it.instance("matches a Chinese skill name inside a natural-language query", () =>
+    Effect.gen(function* () {
+      const dir = (yield* TestInstance).directory
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "代码审查"), "代码审查", "审查代码变更。")
+      yield* writeSkill(path.join(dir, ".opencode", "skill", "部署发布"), "部署发布", "部署并发布项目。")
+      yield* useTestHome(dir)
+
+      const result = yield* executeSkillSearch({ query: "帮我使用代码审查技能" })
+
+      expect(result.metadata.skills).toEqual(["代码审查"])
+      expect(result.output).toContain("代码审查")
+      expect(result.output).not.toContain("部署发布")
     }),
   )
 
