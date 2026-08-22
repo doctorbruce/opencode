@@ -151,7 +151,7 @@ describe("tool.task", () => {
         const alpha = first.indexOf("- alpha: Alpha agent")
         const explore = first.indexOf("- explore:")
         const general = first.indexOf("- general:")
-        const zebra = first.indexOf("- zebra: Zebra agent")
+        const zebra = first.indexOf("- zebra (Zebra Assistant): Zebra agent")
 
         expect(alpha).toBeGreaterThan(-1)
         expect(explore).toBeGreaterThan(alpha)
@@ -162,11 +162,61 @@ describe("tool.task", () => {
       config: {
         agent: {
           zebra: {
+            displayName: "Zebra Assistant",
             description: "Zebra agent",
             mode: "subagent",
           },
           alpha: {
             description: "Alpha agent",
+            mode: "subagent",
+          },
+        },
+      },
+    },
+  )
+
+  it.instance(
+    "execute propagates the subagent display name without changing its runtime identity",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        let runningMetadata: unknown
+        let seen: SessionPrompt.PromptInput | undefined
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "reviewer",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps: stubOps({ onPrompt: (input) => (seen = input) }) },
+            messages: [],
+            metadata: (input) =>
+              Effect.sync(() => {
+                runningMetadata = input.metadata
+              }),
+            ask: () => Effect.void,
+          },
+        )
+
+        expect((yield* sessions.get(result.metadata.sessionId)).agent).toBe("reviewer")
+        expect(seen?.agent).toBe("reviewer")
+        expect(runningMetadata).toMatchObject({ assistantName: "Code Assistant" })
+        expect(result.metadata).toMatchObject({ assistantName: "Code Assistant" })
+      }),
+    {
+      config: {
+        agent: {
+          reviewer: {
+            displayName: "Code Assistant",
             mode: "subagent",
           },
         },
@@ -546,42 +596,55 @@ describe("tool.task", () => {
     }),
   )
 
-  background.instance("execute launches background tasks without waiting for completion", () =>
-    Effect.gen(function* () {
-      const jobs = yield* BackgroundJob.Service
-      const { chat, assistant } = yield* seed()
-      const tool = yield* TaskTool
-      const def = yield* tool.init()
+  background.instance(
+    "execute launches background tasks without waiting for completion",
+    () =>
+      Effect.gen(function* () {
+        const jobs = yield* BackgroundJob.Service
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
 
-      const result = yield* def.execute(
-        {
-          description: "inspect bug",
-          prompt: "look into the cache key path",
-          subagent_type: "general",
-          background: true,
-        },
-        {
-          sessionID: chat.id,
-          messageID: assistant.id,
-          agent: "build",
-          abort: new AbortController().signal,
-          extra: {
-            promptOps: {
-              ...stubOps(),
-              prompt: () => Effect.never,
-            } satisfies TaskPromptOps,
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+            background: true,
           },
-          messages: [],
-          metadata: () => Effect.void,
-          ask: () => Effect.void,
-        },
-      )
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: {
+              promptOps: {
+                ...stubOps(),
+                prompt: () => Effect.never,
+              } satisfies TaskPromptOps,
+            },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
 
-      const job = yield* jobs.get(result.metadata.sessionId)
-      expect(result.metadata.background).toBe(true)
-      expect(result.output).toContain(`state="running"`)
-      expect(job?.status).toBe("running")
-    }),
+        const job = yield* jobs.get(result.metadata.sessionId)
+        expect(result.metadata.background).toBe(true)
+        expect(result.metadata.assistantName).toBe("General Assistant")
+        expect(result.output).toContain(`state="running"`)
+        expect(job?.status).toBe("running")
+        expect(job?.metadata?.assistantName).toBe("General Assistant")
+      }),
+    {
+      config: {
+        agent: {
+          general: {
+            displayName: "General Assistant",
+          },
+        },
+      },
+    },
   )
 
   background.instance("background task completion waits for running updates", () =>

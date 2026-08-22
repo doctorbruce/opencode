@@ -373,3 +373,13 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Initialized Windows PowerShell and PowerShell 7 shell tool processes with UTF-8 console and pipeline output encodings before running user commands.
 - Prevented Chinese filenames and command output from being decoded into replacement characters when the runtime inherits a legacy Windows code page.
 - Added regression coverage for both PowerShell variants, including their reported encodings and captured Unicode output.
+
+## 2026-08-22
+
+### Task subagent display names
+
+- Added optional `displayName` to configured and runtime Agent records while preserving the technical `Agent.name` used for lookup, permissions, and child Session execution.
+- Included display names in model-facing Task candidate descriptions without changing the required `subagent_type` identifier.
+- Added `assistantName` to Task running, completed, and background metadata when the selected Agent has a display name, allowing Astron HTTP/SSE consumers to project the correct Assistant name.
+- Added regression coverage proving Task metadata carries the display name while the child Session continues to use the technical Agent identity.
+- Added `astron-task-assistant-name-handoff.md` with the required Astron config projection, history hydration, event fallback, rollout order, and acceptance tests for implementation on another machine.

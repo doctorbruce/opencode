@@ -174,6 +174,7 @@ export const TaskTool = Tool.define(
         parentSessionId: ctx.sessionID,
         sessionId: nextSession.id,
         model,
+        ...(next.displayName ? { assistantName: next.displayName } : {}),
         ...(runInBackground ? { background: true } : {}),
       }
 
