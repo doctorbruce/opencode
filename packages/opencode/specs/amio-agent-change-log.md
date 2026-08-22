@@ -365,3 +365,11 @@ bun run script/build.ts --single --amio-agent --skip-install
 
 - Forwarded incremental tool input JSON through transient `message.part.delta` events without executing or persisting partial tool calls.
 - The ACP adapter now parses valid partial tool input and emits pending `tool_call_update` payloads so external clients can render Write content while it is generated.
+
+## 2026-08-19
+
+### PowerShell UTF-8 shell output
+
+- Initialized Windows PowerShell and PowerShell 7 shell tool processes with UTF-8 console and pipeline output encodings before running user commands.
+- Prevented Chinese filenames and command output from being decoded into replacement characters when the runtime inherits a legacy Windows code page.
+- Added regression coverage for both PowerShell variants, including their reported encodings and captured Unicode output.

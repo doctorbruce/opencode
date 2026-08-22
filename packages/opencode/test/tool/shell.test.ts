@@ -191,6 +191,26 @@ describe("tool.shell", () => {
     ),
   )
 
+  for (const item of ps) {
+    it.live(`uses UTF-8 for PowerShell output [${item.label}]`, () =>
+      withShell(
+        item,
+        runIn(
+          projectRoot,
+          Effect.gen(function* () {
+            const result = yield* run({
+              command: "[Console]::OutputEncoding.WebName; $OutputEncoding.WebName; Write-Output '中文文件夹'",
+            })
+            expect(result.metadata.exit).toBe(0)
+            expect(result.output.match(/utf-8/g)?.length).toBe(2)
+            expect(result.output).toContain("中文文件夹")
+            expect(result.output).not.toContain("�")
+          }),
+        ),
+      ),
+    )
+  }
+
   it.live("falls back from terminal-only configured shell", () =>
     Effect.gen(function* () {
       const tmp = yield* tmpdirScoped({ config: { shell: "fish" } })
