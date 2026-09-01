@@ -2,6 +2,13 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-08-31
+
+### Explicit workspace routing for existing sessions
+
+- Kept local session-scoped prompt routing on the explicit `directory` query/header supplied by Astron, even when the session was created under another directory.
+- Updated the prompt regression test to assert that an existing session executes with the current request workspace, matching the sidecar routing contract used when Astron changes a session workspace.
+
 ## 2026-08-18
 
 ### Built-in Astron tool presentation
