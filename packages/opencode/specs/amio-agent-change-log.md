@@ -15,7 +15,7 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Sent OpenAI-compatible `textVerbosity` only when the model explicitly declares support (upstream `3a4c253969`).
 - Tolerated Windows `AlreadyExists` directory-creation races only when the target is already a directory (upstream `656f299017`).
 - Sanitized non-finite model prices before calculating session costs (upstream `9b0dd36cda`).
-- Preserved a running tool call's original start time across metadata updates (upstream `765ae641d7`).
+- Preserved a running tool call's original start time across metadata updates, with regression coverage adapted to the fork's current session and MCP interfaces (upstream `765ae641d7`).
 
 ## 2026-09-07
 

@@ -136,7 +136,7 @@ it.effect("preserves running tool start time across metadata updates", () =>
     const tools = yield* SessionTools.resolve({
       agent,
       model,
-      session: { id: sessionID, permission: [] } as Session.Info,
+      session: { id: sessionID, permission: [] } as unknown as Session.Info,
       processor,
       bypassAgentCheck: false,
       messages: [],
@@ -151,6 +151,7 @@ it.effect("preserves running tool start time across metadata updates", () =>
         {
           toolCallId: callID,
           abortSignal: new AbortController().signal,
+          messages: [],
         },
       ),
     )
