@@ -2,6 +2,15 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-09-08
+
+### Selected upstream reliability fixes
+
+- Omitted empty `movePath` values from `apply_patch` permission metadata so the request remains JSON encodable (upstream `f7da00f35e`).
+- Retried underscored and hyphenated network error variants, and converted provider `network_error` finish reasons into retryable stream failures (upstream `40282c1d4d`, `e0b9e68a68`).
+- Handled rejected SSE reader cancellation without producing an unhandled rejection (upstream `69c172e8a7`).
+- Parsed Codex GPT model versions by numeric major and minor components, including integer and multi-digit versions, while filtering the unsupported bare `gpt-5.6` OAuth alias (upstream `f47684787a`, `500c46ec79`, `02a167e048`).
+
 ## 2026-09-07
 
 ### Direct serve handler for the amio-agent sidecar
