@@ -2,6 +2,21 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-09-07
+
+### Direct serve handler for the amio-agent sidecar
+
+- Registered an amio-agent-specific `serve` command that calls `Server.listen` directly instead of going through `effectCmd` and `AppRuntime`.
+- Kept the regular `opencode serve` command unchanged, including its global config resolution and Effect runtime path.
+- The sidecar path keeps web UI routes disabled and resolves network options from explicit CLI arguments/defaults; Astron's launcher supplies `--hostname` and `--port` explicitly.
+
+## 2026-09-02
+
+### Output-length prompt terminalization
+
+- Converted provider `length` finishes into the existing `MessageOutputLengthError` instead of completing the prompt as a normal end turn.
+- Reused the existing ACP `max_tokens` mapping and added regression coverage for a length-limited response with no visible text.
+
 ## 2026-08-31
 
 ### Explicit workspace routing for existing sessions

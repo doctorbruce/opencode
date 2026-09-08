@@ -919,6 +919,48 @@ it.instance("loop surfaces content-filter finishes as session errors", () =>
   }),
 )
 
+it.instance("loop surfaces length finishes as output length errors", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.push(
+      raw({
+        chunks: [
+          {
+            id: "chatcmpl-test",
+            object: "chat.completion.chunk",
+            choices: [{ delta: { role: "assistant" } }],
+          },
+          {
+            id: "chatcmpl-test",
+            object: "chat.completion.chunk",
+            choices: [{ delta: {}, finish_reason: "length" }],
+          },
+        ],
+      }),
+    )
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+
+    expect(yield* llm.hits).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.finish).toBe("length")
+      expect(result.info.error).toEqual({ name: "MessageOutputLengthError", data: {} })
+    }
+    expect(result.parts.some((part) => part.type === "text")).toBe(false)
+  }),
+)
+
 it.instance("loop stops provider overflow instead of auto-compacting when disabled", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig((url) => ({
