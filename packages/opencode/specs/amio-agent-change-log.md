@@ -10,7 +10,7 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Retried underscored and hyphenated network error variants, and converted provider `network_error` finish reasons into retryable stream failures (upstream `40282c1d4d`, `e0b9e68a68`).
 - Handled rejected SSE reader cancellation without producing an unhandled rejection (upstream `69c172e8a7`).
 - Parsed Codex GPT model versions by numeric major and minor components, including integer and multi-digit versions, while filtering the unsupported bare `gpt-5.6` OAuth alias (upstream `f47684787a`, `500c46ec79`, `02a167e048`).
-- Bounded provider retries with jitter, recognized retryable API error messages and bodies, preserved structured rate-limit parsing, and treated unknown stream errors as retryable failures (upstream `f929f8f100`, `61aefc0759`, `c78986831c`, `71d08e94d5`).
+- Bounded provider retries with jitter, recognized retryable API error messages and bodies, normalized overload and request-limit reasons, preserved structured rate-limit parsing, and treated unknown stream errors as retryable failures (upstream `f929f8f100`, `61aefc0759`, `c78986831c`, `71d08e94d5`).
 - Surfaced failed subagent messages and terminal tool failures with their resumable task IDs (upstream `c313504c82`, `35fe5b7212`).
 - Sent OpenAI-compatible `textVerbosity` only when the model explicitly declares support (upstream `3a4c253969`).
 - Tolerated Windows `AlreadyExists` directory-creation races only when the target is already a directory (upstream `656f299017`).

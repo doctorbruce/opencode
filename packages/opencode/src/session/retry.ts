@@ -146,6 +146,9 @@ export function retryable(error: Err, provider: string) {
 
   const message = isRecord(error.data) ? error.data.message : undefined
   if (typeof message !== "string") return undefined
+  const lower = message.toLowerCase()
+  if (lower.includes("too_many_requests")) return { message: "Too Many Requests" }
+  if (lower.includes("exhausted") || lower.includes("unavailable")) return { message: "Provider is overloaded" }
   if (matchesRetryableMessage(message)) return { message }
 
   const json = parseJSON(message)
