@@ -2,6 +2,14 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-09-09
+
+### Shell timeout process-exit convergence
+
+- Made process termination wait for the child process `exit` event instead of the later stdio `close` event, so inherited output handles cannot leave timed-out shell tools running indefinitely.
+- Kept normal command completion waiting for `close` so successful command output is still fully drained.
+- Added regression coverage for an exited parent whose detached child temporarily retains inherited output handles.
+
 ## 2026-09-08
 
 ### Selected upstream reliability fixes
@@ -420,3 +428,11 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Added `assistantName` to Task running, completed, and background metadata when the selected Agent has a display name, allowing Astron HTTP/SSE consumers to project the correct Assistant name.
 - Added regression coverage proving Task metadata carries the display name while the child Session continues to use the technical Agent identity.
 - Added `astron-task-assistant-name-handoff.md` with the required Astron config projection, history hydration, event fallback, rollout order, and acceptance tests for implementation on another machine.
+
+## 2026-09-10
+
+### Structured write artifact roles
+
+- Added an optional `artifactRole` to the built-in `write` tool and return a structured `metadata.outputs` entry only after a successful write.
+- Kept ordinary writes free of artifact declarations so consumers can distinguish explicit final deliverables from intermediate and temporary files.
+- Updated the write tool instructions with the explicit user-facing deliverable rule.

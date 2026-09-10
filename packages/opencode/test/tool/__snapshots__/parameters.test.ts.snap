@@ -273,6 +273,10 @@ exports[`tool parameters JSON Schema (wire shape) read 1`] = `
       "minimum": 0,
       "type": "integer",
     },
+    "pages": {
+      "description": "Page range for PDF files, for example "1-5" or "3". Maximum 20 pages per request.",
+      "type": "string",
+    },
   },
   "required": [
     "filePath",
@@ -468,6 +472,15 @@ exports[`tool parameters JSON Schema (wire shape) write 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "artifactRole": {
+      "description": "Set to final only when this file is explicitly requested as a user-facing deliverable",
+      "enum": [
+        "final",
+        "intermediate",
+        "temporary",
+      ],
+      "type": "string",
+    },
     "content": {
       "description": "The content to write to the file",
       "type": "string",

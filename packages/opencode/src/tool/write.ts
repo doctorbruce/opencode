@@ -18,11 +18,18 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
+const ArtifactRole = Schema.Literals(["final", "intermediate", "temporary"])
+
 export const Parameters = Schema.Struct({
   content: Schema.String.annotate({ description: "The content to write to the file" }),
   filePath: Schema.String.annotate({
     description: "The absolute path to the file to write (must be absolute, not relative)",
   }),
+  artifactRole: Schema.optional(
+    ArtifactRole.annotate({
+      description: "Set to final only when this file is explicitly requested as a user-facing deliverable",
+    }),
+  ),
 })
 
 export const WriteTool = Tool.define(
@@ -37,7 +44,7 @@ export const WriteTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: Parameters,
-      execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
+      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const instance = yield* InstanceState.context
           const filepath = path.isAbsolute(params.filePath)
@@ -81,6 +88,7 @@ export const WriteTool = Tool.define(
                 diagnostics: {},
                 filepath,
                 exists: exists,
+                outputs: params.artifactRole ? [{ path: filepath, artifactRole: params.artifactRole }] : [],
               },
               output,
             }
@@ -109,6 +117,7 @@ export const WriteTool = Tool.define(
               diagnostics,
               filepath,
               exists: exists,
+              outputs: params.artifactRole ? [{ path: filepath, artifactRole: params.artifactRole }] : [],
             },
             output,
           }
