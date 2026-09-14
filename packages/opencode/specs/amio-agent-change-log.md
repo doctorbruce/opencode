@@ -486,3 +486,8 @@ bun run script/build.ts --single --amio-agent --skip-install
 - `bash` now records files changed during the command workdir window and returns them as tool artifacts so Astron can associate generated files with the exact session/tool call.
 - Deliverable-oriented file extensions are marked `final`; script/config-style files remain `intermediate` unless a higher layer explicitly promotes them.
 - Made `write` require an explicit artifact role in both legacy and core tool schemas, so Markdown and JSON deliverables can be promoted to `final` without making those extensions final by default.
+
+### Restore dependency download sources
+
+- Restored `bun.lock` to its state before the structured tool artifacts commit, removing the unrelated bulk switch to npmmirror download URLs.
+- Kept the structured tool artifacts implementation unchanged.
