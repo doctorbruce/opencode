@@ -9,6 +9,7 @@ import { FSUtil } from "../fs-util"
 import { LocationMutation } from "../location-mutation"
 import { Patch } from "../patch"
 import { PermissionV2 } from "../permission"
+import { ToolArtifact } from "./artifact"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
@@ -29,6 +30,7 @@ export const Applied = Schema.Struct({
 export const Output = Schema.Struct({
   applied: Schema.Array(Applied),
   files: Schema.Array(FileDiff.Info),
+  artifacts: Schema.Array(ToolArtifact.Info),
 })
 export type Output = typeof Output.Type
 
@@ -183,7 +185,11 @@ export const layer = Layer.effectDiscard(
                     }).pipe(Effect.mapError(() => fail(change.path))),
                   { discard: true },
                 )
-                return { applied, files: patchFiles }
+                return {
+                  applied,
+                  files: patchFiles,
+                  artifacts: ToolArtifact.fromPaths(applied.filter((item) => item.type !== "delete")),
+                }
               }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : fail("patch"))))
             },
           }),

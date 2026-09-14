@@ -25,12 +25,10 @@ export const Parameters = Schema.Struct({
   filePath: Schema.String.annotate({
     description: "The absolute path to the file to write (must be absolute, not relative)",
   }),
-  artifactRole: Schema.optional(
-    ArtifactRole.annotate({
-      description:
-        "MUST set to final when writing a final file that fulfills the user's requested deliverable, even if you choose its filename or format. For supporting or intermediate files, omit or use intermediate/temporary.",
-    }),
-  ),
+  artifactRole: ArtifactRole.annotate({
+    description:
+      "Required role for the file written by this call. Use final when the file fulfills a user-facing deliverable, including Markdown or JSON deliverables; use intermediate or temporary for supporting scripts, configs, logs, validation files, and build-only files.",
+  }),
 })
 
 export const WriteTool = Tool.define(
@@ -89,7 +87,7 @@ export const WriteTool = Tool.define(
                 diagnostics: {},
                 filepath,
                 exists: exists,
-                outputs: params.artifactRole ? [{ path: filepath, artifactRole: params.artifactRole }] : [],
+                outputs: [{ path: filepath, artifactRole: params.artifactRole }],
               },
               output,
             }
@@ -118,7 +116,7 @@ export const WriteTool = Tool.define(
               diagnostics,
               filepath,
               exists: exists,
-              outputs: params.artifactRole ? [{ path: filepath, artifactRole: params.artifactRole }] : [],
+              outputs: [{ path: filepath, artifactRole: params.artifactRole }],
             },
             output,
           }

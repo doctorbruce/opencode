@@ -14,6 +14,7 @@ import { FileMutation } from "../file-mutation"
 import { FSUtil } from "../fs-util"
 import { LocationMutation } from "../location-mutation"
 import { PermissionV2 } from "../permission"
+import { ToolArtifact } from "./artifact"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
@@ -34,6 +35,7 @@ export const Input = Schema.Struct({
 export const Output = Schema.Struct({
   files: Schema.Array(FileDiff.Info),
   replacements: Schema.Number,
+  artifacts: Schema.Array(ToolArtifact.Info),
 })
 export type Output = typeof Output.Type
 
@@ -203,6 +205,7 @@ export const layer = Layer.effectDiscard(
                     },
                   ],
                   replacements,
+                  artifacts: [ToolArtifact.fromWrite(result)],
                 } satisfies Output
               })
             },

@@ -223,27 +223,35 @@ describe("BashTool", () => {
   )
 
   if (process.platform !== "win32") {
-    it.live("executes a real shell command through AppProcess", () =>
+    it.live("executes a real shell command through AppProcess and reports changed artifacts", () =>
       Effect.acquireUseRelease(
         Effect.promise(() => tmpdir()),
         (tmp) => {
           reset()
           return withTool(
             tmp.path,
-            (registry) => settleTool(registry, call({ command: "printf core-bash" })),
+            (registry) => settleTool(registry, call({ command: "printf core-bash > report.docx && printf done" })),
             AppProcess.defaultLayer,
           ).pipe(
             Effect.andThen((settled) =>
               Effect.sync(() => {
+                const target = path.join(realpathSync(tmp.path), "report.docx")
                 expect(settled.result).toEqual({
                   type: "content",
                   value: [
-                    { type: "text", text: "core-bash" },
+                    { type: "text", text: "done" },
                     { type: "text", text: "Command exited with code 0." },
                   ],
                 })
                 expect(settled.output?.structured).toMatchObject({
                   exit: 0,
+                  artifacts: [
+                    {
+                      path: target,
+                      relativePath: "report.docx",
+                      artifactRole: "final",
+                    },
+                  ],
                 })
                 expect(settled.output?.structured).not.toHaveProperty("output")
               }),

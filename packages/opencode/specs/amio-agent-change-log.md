@@ -476,3 +476,13 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Added an optional `artifactRole` to the built-in `write` tool and return a structured `metadata.outputs` entry only after a successful write.
 - Kept ordinary writes free of artifact declarations so consumers can distinguish explicit final deliverables from intermediate and temporary files.
 - Updated the write tool instructions with the explicit user-facing deliverable rule.
+
+## 2026-09-14
+
+### Structured tool artifacts
+
+- Added a unified `structured.artifacts` payload for local file-producing tools instead of introducing a separate file journal concept.
+- `write`, `edit`, and `apply_patch` now return artifact evidence for their mutated files with `path`, optional `relativePath`, and `artifactRole`.
+- `bash` now records files changed during the command workdir window and returns them as tool artifacts so Astron can associate generated files with the exact session/tool call.
+- Deliverable-oriented file extensions are marked `final`; script/config-style files remain `intermediate` unless a higher layer explicitly promotes them.
+- Made `write` require an explicit artifact role in both legacy and core tool schemas, so Markdown and JSON deliverables can be promoted to `final` without making those extensions final by default.

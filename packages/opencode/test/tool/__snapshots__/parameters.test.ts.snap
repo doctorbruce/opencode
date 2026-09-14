@@ -473,7 +473,7 @@ exports[`tool parameters JSON Schema (wire shape) write 1`] = `
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "artifactRole": {
-      "description": "Set to final only when this file is explicitly requested as a user-facing deliverable",
+      "description": "Required role for the file written by this call. Use final when the file fulfills a user-facing deliverable, including Markdown or JSON deliverables; use intermediate or temporary for supporting scripts, configs, logs, validation files, and build-only files.",
       "enum": [
         "final",
         "intermediate",
@@ -493,6 +493,7 @@ exports[`tool parameters JSON Schema (wire shape) write 1`] = `
   "required": [
     "content",
     "filePath",
+    "artifactRole",
   ],
   "type": "object",
 }

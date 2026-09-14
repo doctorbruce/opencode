@@ -76,10 +76,12 @@ const withTool = <A, E, R>(directory: string, body: (registry: ToolRegistry.Inte
   }).pipe(Effect.provide(Layer.mergeAll(registry, resolution, mutation, write)))
 }
 
-const call = (input: typeof WriteTool.Input.Type, id = "call-write") => ({
+type WriteInput = typeof WriteTool.Input.Type
+
+const call = (input: Omit<WriteInput, "artifactRole"> & Partial<Pick<WriteInput, "artifactRole">>, id = "call-write") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "write", input },
+  call: { type: "tool-call" as const, id, name: "write", input: { artifactRole: "final" as const, ...input } },
 })
 
 const it = testEffect(Layer.empty)
@@ -94,14 +96,22 @@ describe("WriteTool", () => {
           Effect.gen(function* () {
             expect((yield* toolDefinitions(registry)).map((tool) => tool.name)).toEqual(["write"])
             const settled = yield* settleTool(registry, call({ path: "src/new.txt", content: "created" }))
+            const target = path.join(yield* Effect.promise(() => fs.realpath(tmp.path)), "src", "new.txt")
             expect(settled).toEqual({
               result: { type: "text", value: "Created file successfully: src/new.txt" },
               output: {
                 structured: {
                   operation: "write",
-                  target: path.join(yield* Effect.promise(() => fs.realpath(tmp.path)), "src", "new.txt"),
+                  target,
                   resource: "src/new.txt",
                   existed: false,
+                  artifacts: [
+                    {
+                      path: target,
+                      relativePath: "src/new.txt",
+                      artifactRole: "final",
+                    },
+                  ],
                 },
                 content: [{ type: "text", text: "Created file successfully: src/new.txt" }],
               },
@@ -137,6 +147,48 @@ describe("WriteTool", () => {
               expect(writes).toHaveLength(1)
             }),
           ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
+  it.live("uses the explicit artifact role instead of extension defaults", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        return withTool(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            const final = yield* settleTool(
+              registry,
+              call({ path: "deliverable.md", content: "# Report", artifactRole: "final" }, "call-final-md"),
+            )
+            const intermediate = yield* settleTool(
+              registry,
+              call(
+                { path: "scratch/config.json", content: "{\"ok\":true}", artifactRole: "intermediate" },
+                "call-intermediate-json",
+              ),
+            )
+            const finalStructured = final.output?.structured as WriteTool.Output
+            const intermediateStructured = intermediate.output?.structured as WriteTool.Output
+
+            expect(finalStructured.artifacts).toEqual([
+              {
+                path: path.join(yield* Effect.promise(() => fs.realpath(tmp.path)), "deliverable.md"),
+                relativePath: "deliverable.md",
+                artifactRole: "final",
+              },
+            ])
+            expect(intermediateStructured.artifacts).toEqual([
+              {
+                path: path.join(yield* Effect.promise(() => fs.realpath(tmp.path)), "scratch", "config.json"),
+                relativePath: "scratch/config.json",
+                artifactRole: "intermediate",
+              },
+            ])
+          }),
         )
       },
       (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
@@ -277,7 +329,7 @@ test("keeps the locked write schema, semantics docstring, and deferred UX TODOs 
   )
   const schema = definition[0]?.inputSchema as { readonly properties?: Record<string, unknown> }
 
-  expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["content", "path"])
+  expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["artifactRole", "content", "path"])
   expect(source).toContain(
     "absolute external paths retain mutation capability through a separate\n * external_directory approval before edit approval.",
   )

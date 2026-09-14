@@ -50,11 +50,12 @@ const init = Effect.fn("WriteToolTest.init")(function* () {
 })
 
 const run = Effect.fn("WriteToolTest.run")(function* (
-  args: Tool.InferParameters<typeof WriteTool>,
+  args: Omit<Tool.InferParameters<typeof WriteTool>, "artifactRole"> &
+    Partial<Pick<Tool.InferParameters<typeof WriteTool>, "artifactRole">>,
   next: Tool.Context = ctx,
 ) {
   const tool = yield* init()
-  return yield* tool.execute(args, next)
+  return yield* tool.execute({ artifactRole: "final", ...args }, next)
 })
 
 const fakeLsp = (calls: { touch: number; diagnostics: number }) =>

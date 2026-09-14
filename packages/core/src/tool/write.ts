@@ -11,6 +11,7 @@ import { Effect, Layer, Schema } from "effect"
 import { FileMutation } from "../file-mutation"
 import { LocationMutation } from "../location-mutation"
 import { PermissionV2 } from "../permission"
+import { ToolArtifact } from "./artifact"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
@@ -23,6 +24,10 @@ export const Input = Schema.Struct({
       "File path to write. Relative paths resolve within the active Location. Absolute paths inside that Location are accepted; external absolute paths require external_directory approval.",
   }),
   content: Schema.String.annotate({ description: "Content to write to the file" }),
+  artifactRole: ToolArtifact.Role.annotate({
+    description:
+      "Required role for the file written by this call. Use final only when this file is a user-facing deliverable requested by the user, including Markdown or JSON deliverables; use intermediate or temporary for supporting scripts, configs, logs, validation files, and build-only files.",
+  }),
 })
 
 export const Output = Schema.Struct({
@@ -30,6 +35,7 @@ export const Output = Schema.Struct({
   target: Schema.String,
   resource: Schema.String,
   existed: Schema.Boolean,
+  artifacts: Schema.Array(ToolArtifact.Info),
 })
 export type Output = typeof Output.Type
 
@@ -54,7 +60,7 @@ export const layer = Layer.effectDiscard(
         [name]: Tool.withPermission(
           Tool.make({
             description:
-              "Write content to one file. Relative paths resolve within the active Location. Absolute paths inside the Location are accepted. Explicit external absolute paths require external_directory approval before edit approval.",
+              "Write content to one file. Relative paths resolve within the active Location. Absolute paths inside the Location are accepted. Explicit external absolute paths require external_directory approval before edit approval. Always set artifactRole for this file: final for requested user-facing deliverables, intermediate or temporary for supporting files.",
             input: Input,
             output: Output,
             toModelOutput: ({ output }) => [{ type: "text", text: toModelOutput(output) }],
@@ -82,7 +88,8 @@ export const layer = Layer.effectDiscard(
                   agent: context.agent,
                   source,
                 })
-                return yield* files.writeTextPreservingBom({ target, content: input.content })
+                const result = yield* files.writeTextPreservingBom({ target, content: input.content })
+                return { ...result, artifacts: [ToolArtifact.fromWrite(result, input.artifactRole)] }
               }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to write ${input.path}` }))),
           }),
           "edit",

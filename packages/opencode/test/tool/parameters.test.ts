@@ -294,8 +294,12 @@ describe("tool parameters", () => {
   })
 
   describe("write", () => {
-    test("accepts content + filePath", () => {
-      expect(parse(Write, { content: "hi", filePath: "/a" })).toEqual({ content: "hi", filePath: "/a" })
+    test("accepts content + filePath + artifactRole", () => {
+      expect(parse(Write, { content: "hi", filePath: "/a", artifactRole: "final" })).toEqual({
+        content: "hi",
+        filePath: "/a",
+        artifactRole: "final",
+      })
     })
     test("rejects missing filePath", () => {
       expect(accepts(Write, { content: "hi" })).toBe(false)

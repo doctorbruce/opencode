@@ -1,6 +1,7 @@
 export * as BashTool from "./bash"
 
 import path from "path"
+import fs from "fs"
 import { ToolFailure } from "@opencode-ai/llm"
 import { Duration, Effect, Layer, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
@@ -10,6 +11,7 @@ import { LocationMutation } from "../location-mutation"
 import { AppProcess } from "../process"
 import { PermissionV2 } from "../permission"
 import { PositiveInt } from "../schema"
+import { ToolArtifact } from "./artifact"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 
@@ -34,6 +36,7 @@ const StructuredOutput = Schema.Struct({
   exit: Schema.Number.pipe(Schema.optional),
   truncated: Schema.Boolean,
   timeout: Schema.Boolean.pipe(Schema.optional),
+  artifacts: Schema.Array(ToolArtifact.Info).pipe(Schema.optional),
 })
 
 const Output = Schema.Struct({
@@ -88,6 +91,34 @@ const externalCommandDirectories = (command: string, cwd: string) => {
   return [...directories]
 }
 
+const artifactSnapshot = async (directory: string) => {
+  const snapshot = new Map<string, string>()
+  const walk = async (current: string) => {
+    const entries = await fs.promises.readdir(current, { withFileTypes: true }).catch(() => [])
+    await Promise.all(
+      entries
+        .filter((entry) => entry.name !== ".git" && entry.name !== "node_modules")
+        .map(async (entry) => {
+          const target = path.join(current, entry.name)
+          if (entry.isDirectory()) return walk(target)
+          if (!entry.isFile()) return
+          const stat = await fs.promises.stat(target).catch(() => undefined)
+          if (!stat) return
+          snapshot.set(path.relative(directory, target).replaceAll("\\", "/"), `${stat.size}:${stat.mtimeMs}`)
+        }),
+    )
+  }
+  await walk(directory)
+  return snapshot
+}
+
+const artifactsFromSnapshotDiff = async (directory: string, before: Map<string, string>) => {
+  const after = await artifactSnapshot(directory)
+  return [...after]
+    .filter(([resource, fingerprint]) => before.get(resource) !== fingerprint)
+    .map(([resource]) => ToolArtifact.fromWrite({ target: path.join(directory, resource), resource }))
+}
+
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const tools = yield* Tools.Service
@@ -106,6 +137,7 @@ export const layer = Layer.effectDiscard(
           structured: StructuredOutput,
           toStructuredOutput: ({ output }) => ({
             truncated: output.truncated,
+            ...(output.artifacts === undefined ? {} : { artifacts: output.artifacts }),
             ...(output.exit === undefined ? {} : { exit: output.exit }),
             ...(output.timeout === undefined ? {} : { timeout: output.timeout }),
           }),
@@ -145,6 +177,8 @@ export const layer = Layer.effectDiscard(
               if ((yield* fs.stat(target.canonical)).type !== "Directory")
                 return yield* Effect.fail(new Error(`Working directory is not a directory: ${target.canonical}`))
 
+              const before = yield* Effect.promise(() => artifactSnapshot(target.canonical))
+
               const entries = yield* config.entries()
               const shell =
                 Object.assign({}, ...entries.flatMap((entry) => (entry.type === "document" ? [entry.info] : [])))
@@ -181,10 +215,12 @@ export const layer = Layer.effectDiscard(
               const notice = result.outputTruncated
                 ? "[output capture truncated at the in-memory safety limit]"
                 : undefined
+              const artifacts = yield* Effect.promise(() => artifactsFromSnapshotDiff(target.canonical, before))
               return {
                 exit: result.exitCode,
                 output: notice ? `${output}\n\n${notice}` : output,
                 truncated: result.outputTruncated === true,
+                ...(artifacts.length ? { artifacts } : {}),
                 ...(warnings.length ? { warnings } : {}),
               }
             }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to execute command: ${input.command}` }))),
