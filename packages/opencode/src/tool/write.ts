@@ -27,7 +27,8 @@ export const Parameters = Schema.Struct({
   }),
   artifactRole: Schema.optional(
     ArtifactRole.annotate({
-      description: "Set to final only when this file is explicitly requested as a user-facing deliverable",
+      description:
+        "MUST set to final when writing a final file that fulfills the user's requested deliverable, even if you choose its filename or format. For supporting or intermediate files, omit or use intermediate/temporary.",
     }),
   ),
 })

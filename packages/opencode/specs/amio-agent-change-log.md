@@ -2,6 +2,14 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-09-11
+
+### Require explicit roles for requested write deliverables
+
+- Clarified both the write tool description and its `artifactRole` parameter description: writing the final file that fulfills a requested deliverable must use `final`, including when the agent chooses the filename or format. Added the novel/report example that was missing the role in observed sessions.
+- Kept the parameter optional for compatibility and supporting files; intermediate scripts, assets, and source files may still omit it or use `intermediate`/`temporary`. Unrequested extra files must not be labeled `final`.
+- This is a model instruction change, not a schema or output protocol change. Package typecheck passed. On September 14, a live write of `tetris/index.html` supplied `final`, returned the matching `metadata.outputs`, and reached Astron's artifact ledger as an explicit `tool_outputs` record; supporting files also used `temporary` and `intermediate`. This confirms observed usage, not guaranteed model compliance on every call.
+
 ## 2026-09-09
 
 ### Shell timeout process-exit convergence

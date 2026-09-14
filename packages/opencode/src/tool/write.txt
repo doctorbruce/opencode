@@ -6,7 +6,7 @@ Usage:
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
-- Only set artifactRole when the user explicitly requests this file as a deliverable.
-- Set artifactRole to "final" only for a user-facing deliverable.
-- Source files, scripts, configuration files, logs, previews, validation files, unpacked assets, and intermediate build files must omit artifactRole or use "intermediate"/"temporary".
+- You MUST set artifactRole to "final" when writing a final file that fulfills the user's requested deliverable. The user does not need to specify a filename or format; choosing these yourself does not make the file intermediate.
+- For example, a completed novel saved as Markdown or a requested report saved as a document is "final", even when the user only asked for the novel or report.
+- Files used only to build or support the deliverable, such as scripts, configuration files, logs, previews, validation files, unpacked assets, and intermediate source files, must omit artifactRole or use "intermediate"/"temporary". Do not mark an unrequested extra file as "final".
 - The artifactRole applies only to the filePath written by this tool.
