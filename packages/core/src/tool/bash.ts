@@ -1,7 +1,6 @@
 export * as BashTool from "./bash"
 
 import path from "path"
-import fs from "fs"
 import { ToolFailure } from "@opencode-ai/llm"
 import { Duration, Effect, Layer, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
@@ -25,6 +24,22 @@ export const Input = Schema.Struct({
   workdir: Schema.String.pipe(Schema.optional).annotate({
     description: "Working directory. Defaults to the active Location; relative paths resolve from that Location.",
   }),
+  outputs: Schema.Array(
+    Schema.Struct({
+      path: Schema.String.annotate({
+        description: "Expected output file path created or updated by this command. Relative paths resolve from workdir.",
+      }),
+      artifactRole: ToolArtifact.Role.annotate({
+        description:
+          "Role for this declared output. Use final only for requested user-facing deliverables; use intermediate or temporary for supporting files.",
+      }),
+    }),
+  )
+    .pipe(Schema.optional)
+    .annotate({
+      description:
+        "Explicit files this command is expected to create or update. Bash does not scan the working tree; only declared existing output files are reported as artifacts.",
+    }),
   timeout: PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_TIMEOUT_MS))
     .pipe(Schema.optional)
     .annotate({
@@ -91,34 +106,6 @@ const externalCommandDirectories = (command: string, cwd: string) => {
   return [...directories]
 }
 
-const artifactSnapshot = async (directory: string) => {
-  const snapshot = new Map<string, string>()
-  const walk = async (current: string) => {
-    const entries = await fs.promises.readdir(current, { withFileTypes: true }).catch(() => [])
-    await Promise.all(
-      entries
-        .filter((entry) => entry.name !== ".git" && entry.name !== "node_modules")
-        .map(async (entry) => {
-          const target = path.join(current, entry.name)
-          if (entry.isDirectory()) return walk(target)
-          if (!entry.isFile()) return
-          const stat = await fs.promises.stat(target).catch(() => undefined)
-          if (!stat) return
-          snapshot.set(path.relative(directory, target).replaceAll("\\", "/"), `${stat.size}:${stat.mtimeMs}`)
-        }),
-    )
-  }
-  await walk(directory)
-  return snapshot
-}
-
-const artifactsFromSnapshotDiff = async (directory: string, before: Map<string, string>) => {
-  const after = await artifactSnapshot(directory)
-  return [...after]
-    .filter(([resource, fingerprint]) => before.get(resource) !== fingerprint)
-    .map(([resource]) => ToolArtifact.fromWrite({ target: path.join(directory, resource), resource }))
-}
-
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const tools = yield* Tools.Service
@@ -177,8 +164,6 @@ export const layer = Layer.effectDiscard(
               if ((yield* fs.stat(target.canonical)).type !== "Directory")
                 return yield* Effect.fail(new Error(`Working directory is not a directory: ${target.canonical}`))
 
-              const before = yield* Effect.promise(() => artifactSnapshot(target.canonical))
-
               const entries = yield* config.entries()
               const shell =
                 Object.assign({}, ...entries.flatMap((entry) => (entry.type === "document" ? [entry.info] : [])))
@@ -215,7 +200,17 @@ export const layer = Layer.effectDiscard(
               const notice = result.outputTruncated
                 ? "[output capture truncated at the in-memory safety limit]"
                 : undefined
-              const artifacts = yield* Effect.promise(() => artifactsFromSnapshotDiff(target.canonical, before))
+              const artifacts = yield* Effect.forEach(input.outputs ?? [], (item) =>
+                Effect.gen(function* () {
+                  const resolved = yield* mutation.resolve({ path: path.resolve(target.canonical, item.path), kind: "file" })
+                  const stat = yield* fs.stat(resolved.canonical).pipe(Effect.option)
+                  if (stat._tag === "None" || stat.value.type !== "File") return undefined
+                  return ToolArtifact.fromWrite(
+                    { target: resolved.canonical, resource: path.relative(target.canonical, resolved.canonical) },
+                    item.artifactRole,
+                  )
+                }),
+              ).pipe(Effect.map((items) => items.filter((item) => item !== undefined)))
               return {
                 exit: result.exitCode,
                 output: notice ? `${output}\n\n${notice}` : output,

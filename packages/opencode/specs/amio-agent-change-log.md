@@ -483,7 +483,7 @@ bun run script/build.ts --single --amio-agent --skip-install
 
 - Added a unified `structured.artifacts` payload for local file-producing tools instead of introducing a separate file journal concept.
 - `write`, `edit`, and `apply_patch` now return artifact evidence for their mutated files with `path`, optional `relativePath`, and `artifactRole`.
-- `bash` now records files changed during the command workdir window and returns them as tool artifacts so Astron can associate generated files with the exact session/tool call.
+- `bash` now returns artifacts only for explicit `outputs` declared on the tool call, avoiding recursive worktree scans while still letting command-generated deliverables be associated with the exact session/tool call.
 - Deliverable-oriented file extensions are marked `final`; script/config-style files remain `intermediate` unless a higher layer explicitly promotes them.
 - Made `write` require an explicit artifact role in both legacy and core tool schemas, so Markdown and JSON deliverables can be promoted to `final` without making those extensions final by default.
 

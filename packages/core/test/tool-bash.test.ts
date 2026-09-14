@@ -223,14 +223,21 @@ describe("BashTool", () => {
   )
 
   if (process.platform !== "win32") {
-    it.live("executes a real shell command through AppProcess and reports changed artifacts", () =>
+    it.live("executes a real shell command through AppProcess and reports declared artifacts", () =>
       Effect.acquireUseRelease(
         Effect.promise(() => tmpdir()),
         (tmp) => {
           reset()
           return withTool(
             tmp.path,
-            (registry) => settleTool(registry, call({ command: "printf core-bash > report.docx && printf done" })),
+            (registry) =>
+              settleTool(
+                registry,
+                call({
+                  command: "printf core-bash > report.docx && printf ignored > ignored.docx && printf done",
+                  outputs: [{ path: "report.docx", artifactRole: "final" }],
+                }),
+              ),
             AppProcess.defaultLayer,
           ).pipe(
             Effect.andThen((settled) =>
