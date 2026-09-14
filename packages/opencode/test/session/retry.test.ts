@@ -4,7 +4,8 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { NamedError } from "@opencode-ai/core/util/error"
 import { APICallError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Effect, Schedule, Schema } from "effect"
+import { Clock, Effect, Fiber, Schedule, Schema } from "effect"
+import { TestClock } from "effect/testing"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -33,71 +34,22 @@ function wrap(message: unknown): ReturnType<NamedError["toObject"]> {
 }
 
 describe("session.retry.delay", () => {
-  test("caps delay at 30 seconds when headers missing", () => {
-    const error = apiError()
-    const delays = Array.from({ length: 10 }, (_, index) => SessionRetry.delay(index + 1, error, 0))
+  test("caps exponential delay at 30 seconds", () => {
+    const delays = Array.from({ length: 10 }, (_, index) => SessionRetry.delay(index + 1, 0))
     expect(delays).toStrictEqual([2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000, 30000])
   })
 
   test("adds jitter to exponential delays", () => {
-    const error = apiError()
-    expect(SessionRetry.delay(1, error, 0)).toBe(2000)
-    expect(SessionRetry.delay(1, error, 1)).toBe(2500)
-    expect(SessionRetry.delay(4, error, 1)).toBe(20000)
-    expect(SessionRetry.delay(5, error, 1)).toBe(30000)
-  })
-
-  test("prefers retry-after-ms when shorter than exponential", () => {
-    const error = apiError({ "retry-after-ms": "1500" })
-    expect(SessionRetry.delay(4, error)).toBe(1500)
-  })
-
-  test("uses retry-after seconds when reasonable", () => {
-    const error = apiError({ "retry-after": "30" })
-    expect(SessionRetry.delay(3, error)).toBe(30000)
-  })
-
-  test("accepts http-date retry-after values", () => {
-    const date = new Date(Date.now() + 20000).toUTCString()
-    const error = apiError({ "retry-after": date })
-    const d = SessionRetry.delay(1, error)
-    expect(d).toBeGreaterThanOrEqual(19000)
-    expect(d).toBeLessThanOrEqual(20000)
-  })
-
-  test("ignores invalid retry hints", () => {
-    const error = apiError({ "retry-after": "not-a-number" })
-    expect(SessionRetry.delay(1, error, 0)).toBe(2000)
-  })
-
-  test("ignores malformed date retry hints", () => {
-    const error = apiError({ "retry-after": "Invalid Date String" })
-    expect(SessionRetry.delay(1, error, 0)).toBe(2000)
-  })
-
-  test("ignores past date retry hints", () => {
-    const pastDate = new Date(Date.now() - 5000).toUTCString()
-    const error = apiError({ "retry-after": pastDate })
-    expect(SessionRetry.delay(1, error, 0)).toBe(2000)
-  })
-
-  test("uses retry-after values even when exceeding 10 minutes with headers", () => {
-    const error = apiError({ "retry-after": "50" })
-    expect(SessionRetry.delay(1, error)).toBe(50000)
-
-    const longError = apiError({ "retry-after-ms": "700000" })
-    expect(SessionRetry.delay(1, longError)).toBe(700000)
-  })
-
-  test("caps oversized header delays to the runtime timer limit", () => {
-    const error = apiError({ "retry-after-ms": "999999999999" })
-    expect(SessionRetry.delay(1, error)).toBe(SessionRetry.RETRY_MAX_DELAY)
+    expect(SessionRetry.delay(1, 0)).toBe(2000)
+    expect(SessionRetry.delay(1, 1)).toBe(2500)
+    expect(SessionRetry.delay(4, 1)).toBe(20000)
+    expect(SessionRetry.delay(5, 1)).toBe(30000)
   })
 
   it.instance("policy updates retry status and increments attempts", () =>
     Effect.gen(function* () {
       const sessionID = SessionID.make("session-retry-test")
-      const error = apiError({ "retry-after-ms": "0" })
+      const error = apiError({ "retry-after": "60", "retry-after-ms": "60000" })
       const status = yield* SessionStatus.Service
 
       const step = yield* Schedule.toStepWithMetadata(
@@ -113,21 +65,31 @@ describe("session.retry.delay", () => {
             }),
         }),
       )
-      yield* step(error)
-      yield* step(error)
+      const before = yield* Clock.currentTimeMillis
+      const firstStep = yield* step(error).pipe(Effect.forkChild)
+      yield* TestClock.adjust("3 seconds")
+      yield* Fiber.join(firstStep)
+      const first = yield* status.get(sessionID)
+      expect(first.type).toBe("retry")
+      if (first.type !== "retry") throw new Error("expected retry")
+      expect(first.next - before).toBeGreaterThanOrEqual(2000)
+      expect(first.next - before).toBeLessThan(5000)
+      const secondStep = yield* step(error).pipe(Effect.forkChild)
+      yield* TestClock.adjust("6 seconds")
+      yield* Fiber.join(secondStep)
 
       expect(yield* status.get(sessionID)).toMatchObject({
         type: "retry",
         attempt: 2,
         message: "boom",
       })
-    }),
+    }).pipe(Effect.provide(TestClock.layer())),
   )
 
-  it.instance("policy stops after five retries", () =>
+  it.effect("policy stops after five retries", () =>
     Effect.gen(function* () {
       const attempts: number[] = []
-      const error = apiError({ "retry-after-ms": "0" })
+      const error = apiError()
       const step = yield* Schedule.toStepWithMetadata(
         SessionRetry.policy({
           provider: "test",
@@ -139,9 +101,11 @@ describe("session.retry.delay", () => {
         }),
       )
 
-      yield* Effect.forEach(Array.from({ length: SessionRetry.RETRY_MAX_RETRIES + 1 }), () =>
+      const fiber = yield* Effect.forEach(Array.from({ length: SessionRetry.RETRY_MAX_RETRIES + 1 }), () =>
         Effect.ignore(step(error)),
-      )
+      ).pipe(Effect.forkChild)
+      yield* TestClock.adjust("5 minutes")
+      yield* Fiber.join(fiber)
 
       expect(attempts).toStrictEqual([1, 2, 3, 4, 5])
     }),
@@ -242,6 +206,23 @@ describe("session.retry.retryable", () => {
       }).toObject(),
     )
     expect(SessionRetry.retryable(error, retryProvider)).toEqual({ message: "Request failed" })
+  })
+
+  test("does not interpret gateway diagnostic IDs as retryable status codes", () => {
+    const error = MessageV2.fromError(
+      {
+        error: {
+          message: "Upstream API error: 400",
+          upstream: { status_code: 400, headers: { "x-request-id": "c02503abc", "x-trace-id": "503" } },
+        },
+      },
+      { providerID },
+    )
+    expect(SessionRetry.retryable(error, retryProvider)).toBeUndefined()
+  })
+
+  test("does not interpret a request ID in an error message as a status code", () => {
+    expect(SessionRetry.retryable(wrap("Invalid request (id c02503abc)"), retryProvider)).toBeUndefined()
   })
   test("retries transport timeout errors", () => {
     const request = MessageV2.fromError(new ProviderError.HeaderTimeoutError(10000), { providerID })

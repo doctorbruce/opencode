@@ -722,6 +722,8 @@ export function fromError(
               message: parsed.message,
               isRetryable: parsed.isRetryable,
               responseBody: parsed.responseBody,
+              ...(parsed.statusCode !== undefined ? { statusCode: parsed.statusCode } : {}),
+              ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
             },
             {
               cause: e,

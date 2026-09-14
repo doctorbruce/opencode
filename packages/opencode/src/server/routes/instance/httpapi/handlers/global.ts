@@ -11,7 +11,7 @@ import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
-import { RootHttpApi } from "../api"
+import { SharedRootHttpApi } from "../shared-api"
 import { GlobalConfigInvalidateError, GlobalUpgradeInput } from "../groups/global"
 import { InstanceStore } from "@/project/instance-store"
 
@@ -67,7 +67,7 @@ function eventResponse() {
   })
 }
 
-export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handlers) =>
+export const globalHandlers = HttpApiBuilder.group(SharedRootHttpApi, "global", (handlers) =>
   Effect.gen(function* () {
     const config = yield* Config.Service
     const configRuntime = yield* ConfigRuntime.Service

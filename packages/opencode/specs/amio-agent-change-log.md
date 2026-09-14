@@ -10,6 +10,38 @@ This document records local fork changes made for Astron Cowork's opencode sidec
 - Kept the parameter optional for compatibility and supporting files; intermediate scripts, assets, and source files may still omit it or use `intermediate`/`temporary`. Unrequested extra files must not be labeled `final`.
 - This is a model instruction change, not a schema or output protocol change. Package typecheck passed. On September 14, a live write of `tetris/index.html` supplied `final`, returned the matching `metadata.outputs`, and reached Astron's artifact ledger as an explicit `tool_outputs` record; supporting files also used `temporary` and `intermediate`. This confirms observed usage, not guaranteed model compliance on every call.
 
+### Start amio-agent with its dedicated HTTP surface
+
+- Added an amio-agent route assembly for the global, config, session, MCP, permission, question, experimental, and auth endpoints used by Astron and runtime plugins. It does not mount the full UI, PTY, file, project, workspace, sync, control-plane, or V2 HTTP route groups.
+- Added a Bun startup listener that makes authenticated `/global/health`, `/global/event`, and cold local `/session/status` available without building the Effect application graph. The declared HttpApi remains the source of the endpoint contracts and handles every other request after one shared lazy initialization.
+- Kept authentication, CORS, mDNS, the preferred-port fallback, SSE heartbeats, and listener address publication available in the startup layer. Delegated requests still use the production schema errors, compression, observability, fencing, workspace routing, and instance lifecycle middleware.
+- Warmed the delegated handler with a side-effect-free health request before dispatching the first business request, so a client cancellation during lazy initialization cannot execute a prompt or control action after the caller has already retried. The listener publishes when application loading starts so this cancellation boundary is tested deterministically. Failed initialization may be retried, and a later `stop(true)` can force an in-progress graceful stop.
+- Moved the live listener address into a lightweight module so plugins use the supported amio-agent HTTP surface without importing the full server graph, while preserving the in-process fallback when no listener exists.
+- Replaced the amio-agent yargs/UI command graph with `node:util.parseArgs`, deferred the heap snapshot module unless enabled, and read the local installation channel from its lightweight version module. The parser keeps Astron's launch flags, `--name=value`, repeated `--cors`, mDNS, help, and version; unsupported generic yargs forms such as space-separated boolean values and trailing positional arguments are outside the Amio CLI surface.
+- In an interleaved compiled Windows benchmark, median authenticated health readiness improved from 1754.15 ms to 70.75 ms and the Astron sequence through `/session?roots=true` improved from 1837.1 ms to 1027.35 ms. A binary smoke received `server.connected` at 75.8 ms while the delegated API was still loading. Five cold-directory status reads created no instances and fell from 328.5 ms total to 65.6 ms.
+
+### Preserve streamed provider failures and report runtime-owned retries
+
+- Enabled raw OpenAI-compatible stream chunks and retained structured gateway errors before the SDK reduces them to a message string. API errors and `prompt.failed` now preserve status, retryability, and allowlisted diagnostics such as the upstream TPM reason, model, provider, and request IDs; gateway keys, caller identity, and arbitrary headers are excluded.
+- Kept retry execution inside OpenCode: up to five retries with exponential backoff starting at two seconds, up to 25% jitter, and a thirty-second cap. Upstream `Retry-After` headers no longer determine scheduling. Existing `session.status` retry events carry the attempt, reason, and next retry time for Astron to display.
+- Kept `retry` status through the in-flight retry request, not only its backoff. Non-empty text, reasoning, tool argument deltas or a tool call restore `busy`; a successful empty stream also clears retry on completion, while terminal errors and cancellation retain the existing idle cleanup. A gated SDK/SSE regression confirms retry remains visible before the second response arrives; success and terminal-failure cases both pass.
+- Preserved complete provider message fields even when a gateway truncates the surrounding raw JSON, without displaying incomplete request IDs or arbitrary raw content.
+- Avoided default retries for plain SSE authentication/client errors and excluded diagnostic IDs from retry classification, while retaining transient network-error message fallbacks.
+- Advanced the retry-status regression with `TestClock` so its two backoff intervals do not exceed Bun's five-second test timeout; retained assertions for the published retry deadline and attempt count.
+- Verified actual SSE 429 responses through the SDK and processor, retry-to-success and retry-to-terminal-error transitions, and structured terminal `prompt.failed` events. Targeted suites passed (64 provider/retry tests, 18 LLM/error mapping tests, two prompt error tests, and two processor retry tests); package `bun typecheck` passed. Sidecar binaries must be rebuilt/deployed for these source changes to take effect.
+
+### Reload provider models through the config epoch
+
+- Included each loaded workspace's provider state in `ConfigRuntime` refreshes, so `/global/config/invalidate` makes newly configured models available without disposing the workspace.
+- Added an HTTP regression test that loads a provider, adds a model to the same workspace config, invalidates the global config epoch, and verifies the new model is returned.
+
+## 2026-09-10
+
+### Avoid inactive workspace bootstrap during status reads
+
+- Made the amio-agent sidecar return an empty `/session/status` snapshot for directories that have not been loaded, instead of creating an instance and eagerly initializing config, plugins, LSP, formatting, VCS, snapshots, and project services.
+- Preserved the existing status path for loaded or concurrently loading directories, and kept regular `opencode serve` behavior unchanged.
+
 ## 2026-09-09
 
 ### Shell timeout process-exit convergence

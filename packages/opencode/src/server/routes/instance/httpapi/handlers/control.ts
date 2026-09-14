@@ -2,11 +2,11 @@ import { Auth } from "@/auth"
 
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { RootHttpApi } from "../api"
+import { SharedRootHttpApi } from "../shared-api"
 import { LogInput } from "../groups/control"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 
-export const controlHandlers = HttpApiBuilder.group(RootHttpApi, "control", (handlers) =>
+export const controlHandlers = HttpApiBuilder.group(SharedRootHttpApi, "control", (handlers) =>
   Effect.gen(function* () {
     const auth = yield* Auth.Service
 

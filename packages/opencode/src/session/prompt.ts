@@ -49,6 +49,7 @@ import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
+import { isRecord } from "@/util/record"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Database } from "@opencode-ai/core/database/database"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -1655,6 +1656,7 @@ const PromptError = Schema.Struct({
   name: Schema.optional(Schema.String),
   message: Schema.String,
   stack: Schema.optional(Schema.String),
+  data: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 })
 
 const PromptUsage = Schema.Struct({
@@ -1841,10 +1843,17 @@ function promptStoredError(value: unknown) {
   }
   if (value && typeof value === "object") {
     const error = value as Record<string, unknown>
-    const message = typeof error.message === "string" ? error.message : JSON.stringify(value)
+    const data = isRecord(error.data) ? error.data : undefined
+    const message =
+      typeof data?.message === "string"
+        ? data.message
+        : typeof error.message === "string"
+          ? error.message
+          : JSON.stringify(value)
     return {
       ...(typeof error.name === "string" ? { name: error.name } : {}),
       message,
+      ...(data ? { data } : {}),
       ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
     }
   }

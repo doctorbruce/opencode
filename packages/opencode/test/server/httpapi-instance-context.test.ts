@@ -14,11 +14,13 @@ import { Workspace } from "../../src/control-plane/workspace"
 import { ConfigRuntime } from "../../src/config/runtime"
 import { InstanceRef, WorkspaceRef } from "../../src/effect/instance-ref"
 import { InstanceLayer } from "../../src/project/instance-layer"
+import { InstanceStore } from "../../src/project/instance-store"
 import { Project } from "../../src/project/project"
 import { Session } from "../../src/session/session"
 import { disposeMiddleware, markInstanceForDisposal } from "../../src/server/routes/instance/httpapi/lifecycle"
 import {
   InstanceContextMiddleware,
+  createInstanceContextLayer,
   instanceContextLayer,
 } from "../../src/server/routes/instance/httpapi/middleware/instance-context"
 import {
@@ -58,17 +60,15 @@ const it = testEffect(
   ).pipe(Layer.provide(Ripgrep.defaultLayer)),
 )
 
-const instanceContextTestLayer = Layer.mergeAll(
-  instanceContextLayer,
-  workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal)),
-).pipe(
-  Layer.provide(
-    Layer.mock(ConfigRuntime.Service)({
-      currentEpoch: () => Effect.succeed(0),
-      ensure: () => Effect.succeed(0),
-    }),
-  ),
-)
+const makeInstanceContextTestLayer = (contextLayer = instanceContextLayer) =>
+  Layer.mergeAll(contextLayer, workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal))).pipe(
+    Layer.provide(
+      Layer.mock(ConfigRuntime.Service)({
+        currentEpoch: () => Effect.succeed(0),
+        ensure: () => Effect.succeed(0),
+      }),
+    ),
+  )
 
 const localAdapter = (directory: string): WorkspaceAdapter => ({
   name: "Local Test",
@@ -107,6 +107,10 @@ const probeInstanceContext = Effect.gen(function* () {
   }
 })
 
+const probeSessionStatus = InstanceStore.Service.use((store) =>
+  store.loadedDirectories().pipe(Effect.map((directories) => ({ loaded: directories.length > 0 }))),
+)
+
 const ProbeResult = Schema.Struct({
   directory: Schema.optional(Schema.String),
   worktree: Schema.optional(Schema.String),
@@ -114,11 +118,14 @@ const ProbeResult = Schema.Struct({
   workspaceID: Schema.optional(Schema.String),
 })
 
+const StatusResult = Schema.Record(Schema.String, Schema.Boolean)
+
 const ProbeApi = HttpApi.make("instance-context-probe").add(
   HttpApiGroup.make("probe")
     .add(
       HttpApiEndpoint.get("get", "/probe", { query: WorkspaceRoutingQuery, success: ProbeResult }),
       HttpApiEndpoint.get("session", "/session", { query: WorkspaceRoutingQuery, success: ProbeResult }),
+      HttpApiEndpoint.get("status", "/session/status", { query: WorkspaceRoutingQuery, success: StatusResult }),
       HttpApiEndpoint.post("dispose", "/dispose-probe", {
         query: WorkspaceRoutingQuery,
         success: Schema.Boolean,
@@ -132,6 +139,7 @@ const probeHandlers = HttpApiBuilder.group(ProbeApi, "probe", (handlers) =>
   handlers
     .handle("get", () => probeInstanceContext)
     .handle("session", () => probeInstanceContext)
+    .handle("status", () => probeSessionStatus)
     .handle(
       "dispose",
       Effect.fn("InstanceContextProbe.dispose")(function* () {
@@ -145,11 +153,18 @@ const probeHandlers = HttpApiBuilder.group(ProbeApi, "probe", (handlers) =>
 
 const probeRoutes = HttpApiBuilder.layer(ProbeApi).pipe(
   Layer.provide(probeHandlers),
-  Layer.provide(instanceContextTestLayer),
+  Layer.provide(makeInstanceContextTestLayer()),
+  Layer.provide(Layer.mock(Session.Service)({})),
+)
+
+const optimizedProbeRoutes = HttpApiBuilder.layer(ProbeApi).pipe(
+  Layer.provide(probeHandlers),
+  Layer.provide(makeInstanceContextTestLayer(createInstanceContextLayer({ skipUnloadedSessionStatusBootstrap: true }))),
   Layer.provide(Layer.mock(Session.Service)({})),
 )
 
 const serveProbe = () => probeRoutes.pipe(HttpRouter.serve, Layer.build)
+const serveOptimizedProbe = () => optimizedProbeRoutes.pipe(HttpRouter.serve, Layer.build)
 
 const waitDisposedEvent = waitGlobalBusEvent({
   message: "timed out waiting for instance disposal",
@@ -162,6 +177,49 @@ const serveDisposeProbe = () =>
   )
 
 describe("HttpApi instance context middleware", () => {
+  it.live("keeps the default status bootstrap behavior", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const store = yield* InstanceStore.Service
+      yield* serveProbe()
+
+      const response = yield* HttpClient.get(`/session/status?directory=${encodeURIComponent(dir)}`)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({ loaded: true })
+      expect(yield* store.loadedDirectories()).toContain(dir)
+    }),
+  )
+
+  it.live("does not create an instance when reading status for an unloaded directory", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const store = yield* InstanceStore.Service
+      yield* serveOptimizedProbe()
+
+      const response = yield* HttpClient.get(`/session/status?directory=${encodeURIComponent(dir)}`)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({})
+      expect(yield* store.loadedDirectories()).not.toContain(dir)
+    }),
+  )
+
+  it.live("reads status through the loaded instance", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const store = yield* InstanceStore.Service
+      yield* store.load({ directory: dir })
+      yield* serveOptimizedProbe()
+
+      const response = yield* HttpClient.get(`/session/status?directory=${encodeURIComponent(dir)}`)
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toEqual({ loaded: true })
+      expect(yield* store.loadedDirectories()).toContain(dir)
+    }),
+  )
+
   it.live("provides instance context from the routed directory", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })

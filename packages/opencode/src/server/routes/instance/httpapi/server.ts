@@ -1,9 +1,8 @@
 import { Config as EffectConfig, Context, Effect, Layer } from "effect"
 import { HttpApiBuilder, OpenApi } from "effect/unstable/httpapi"
-import { HttpClient, HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http"
+import { HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import * as Observability from "@opencode-ai/core/observability"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
@@ -66,7 +65,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionV2 } from "@opencode-ai/core/session"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
 import { lazy } from "@/util/lazy"
-import { CorsConfig, isAllowedCorsOrigin, type CorsOptions } from "@opencode-ai/server/cors"
+import type { CorsOptions } from "@opencode-ai/server/cors"
 import { serveUIEffect } from "@/server/shared/ui"
 import { ServerAuth } from "@/server/auth"
 import { InstanceHttpApi, RootHttpApi } from "./api"
@@ -109,22 +108,10 @@ import { instanceContextLayer } from "./middleware/instance-context"
 import { workspaceRoutingLayer } from "./middleware/workspace-routing"
 import { disposeMiddleware } from "./lifecycle"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
-import { compressionLayer } from "./middleware/compression"
-import { corsVaryFix } from "./middleware/cors-vary"
-import { errorLayer } from "./middleware/error"
-import { fenceLayer } from "./middleware/fence"
+import { withHttpRuntime } from "./middleware/runtime"
 import { schemaErrorLayer } from "./middleware/schema-error"
 
 export const context = Context.makeUnsafe<unknown>(new Map())
-
-const cors = (corsOptions?: CorsOptions) =>
-  HttpRouter.middleware(
-    HttpMiddleware.cors({
-      allowedOrigins: (origin) => isAllowedCorsOrigin(origin, corsOptions),
-      maxAge: 86_400,
-    }),
-    { global: true },
-  )
 
 // Route tree:
 // - rootApiRoutes: typed /global/* and control routes; auth is declared by RootHttpApi.
@@ -279,27 +266,19 @@ const app = LayerNode.group([
 export function createRoutes(
   routeOptions?: RouteOptions,
 ): Layer.Layer<never, EffectConfig.ConfigError, RouteRequirements> {
-  return Layer.mergeAll(
-    rootApiRoutes,
-    eventApiRoutes,
-    ptyConnectApiRoutes,
-    instanceRoutes,
-    serverRoutes,
-    docRoute,
-    ...(shouldServeWebUiRoutes(routeOptions) ? [uiRoute] : []),
+  return withHttpRuntime(
+    Layer.mergeAll(
+      rootApiRoutes,
+      eventApiRoutes,
+      ptyConnectApiRoutes,
+      instanceRoutes,
+      serverRoutes,
+      docRoute,
+      ...(shouldServeWebUiRoutes(routeOptions) ? [uiRoute] : []),
+    ),
+    routeOptions,
   ).pipe(
-    Layer.provide([
-      errorLayer,
-      compressionLayer,
-      corsVaryFix,
-      fenceLayer,
-      cors(routeOptions),
-      MoveSession.defaultLayer,
-      HttpServer.layerServices,
-    ]),
-    Layer.provide(Layer.succeed(CorsConfig)(routeOptions)),
-    Layer.provideMerge(Observability.layer),
-
+    Layer.provide(MoveSession.defaultLayer),
     Layer.provide(sessionLocationLayer),
     Layer.provide(locationLayer),
     Layer.provide(PtyEnvironment.layer),

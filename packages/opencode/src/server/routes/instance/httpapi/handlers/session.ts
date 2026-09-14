@@ -20,7 +20,7 @@ import { Cause, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiError, HttpApiSchema } from "effect/unstable/httpapi"
-import { InstanceHttpApi } from "../api"
+import { SharedInstanceHttpApi } from "../shared-api"
 import {
   CommandPayload,
   DiffQuery,
@@ -44,7 +44,7 @@ const tryParseJson = (text: string) =>
     catch: () => new HttpApiError.BadRequest({}),
   })
 
-export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", (handlers) =>
+export const sessionHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
     const shareSvc = yield* SessionShare.Service

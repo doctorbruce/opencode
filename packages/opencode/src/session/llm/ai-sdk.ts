@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect"
 import { type streamText } from "ai"
 import { errorMessage } from "@/util/error"
 import { ProviderError } from "@/provider/error"
+import { isRecord } from "@/util/record"
 
 type Result = Awaited<ReturnType<typeof streamText>>
 type AISDKEvent = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
@@ -275,6 +276,12 @@ export function toLLMEvents(
       return Effect.succeed([])
 
     case "raw":
+      if (
+        isRecord(event.rawValue) &&
+        isRecord(event.rawValue.error) &&
+        typeof event.rawValue.error.message === "string"
+      )
+        return Effect.fail(event.rawValue)
       return Effect.sync(() => {
         state.copilotTotalNanoAiu = copilotTotalNanoAiu(event.rawValue) ?? state.copilotTotalNanoAiu
         return []

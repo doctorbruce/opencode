@@ -26,12 +26,11 @@ export type Retryable = {
 export const RETRY_INITIAL_DELAY = 2000
 export const RETRY_BACKOFF_FACTOR = 2
 export const RETRY_JITTER_FACTOR = 0.25
-export const RETRY_MAX_DELAY_NO_HEADERS = 30_000 // 30 seconds
-export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for setTimeout
+export const RETRY_MAX_DELAY = 30_000
 export const RETRY_MAX_RETRIES = 5
 
 const RETRYABLE_MESSAGE_PATTERNS = [
-  /429|500|502|503|504|524/i,
+  /\b(?:429|500|502|503|504|524)\b/i,
   /rate increased too quickly|rate limit|rate-limit|rate_limit|too many requests/i,
   /overloaded|service unavailable|service_unavailable|service-unavailable|internal error|internal_error|internal server error|server error|server_error|server-error|provider returned error|provider_returned_error|provider-returned-error/i,
   /terminated|fetch failed|failed to fetch|network[-_\s]error|upstream connect|connection error|connection refused|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout/i,
@@ -40,46 +39,9 @@ const RETRYABLE_MESSAGE_PATTERNS = [
   /\btry again (?:later|in\b)|\b(?:currently|temporarily) at capacity\b/i,
 ]
 
-function cap(ms: number) {
-  return Math.min(ms, RETRY_MAX_DELAY)
-}
-
-export function delay(attempt: number, error?: SessionV1.APIError, random = Math.random()) {
-  if (error) {
-    const headers = error.data.responseHeaders
-    if (headers) {
-      const retryAfterMs = headers["retry-after-ms"]
-      if (retryAfterMs) {
-        const parsedMs = Number.parseFloat(retryAfterMs)
-        if (!Number.isNaN(parsedMs)) {
-          return cap(parsedMs)
-        }
-      }
-
-      const retryAfter = headers["retry-after"]
-      if (retryAfter) {
-        const parsedSeconds = Number.parseFloat(retryAfter)
-        if (!Number.isNaN(parsedSeconds)) {
-          // convert seconds to milliseconds
-          return cap(Math.ceil(parsedSeconds * 1000))
-        }
-        // Try parsing as HTTP date format
-        const parsed = Date.parse(retryAfter) - Date.now()
-        if (!Number.isNaN(parsed) && parsed > 0) {
-          return cap(Math.ceil(parsed))
-        }
-      }
-
-      return cap(exponential(attempt, random))
-    }
-  }
-
-  return cap(Math.min(exponential(attempt, random), RETRY_MAX_DELAY_NO_HEADERS))
-}
-
-function exponential(attempt: number, random: number) {
+export function delay(attempt: number, random = Math.random()) {
   const base = RETRY_INITIAL_DELAY * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1)
-  return Math.ceil(base + base * RETRY_JITTER_FACTOR * random)
+  return Math.min(Math.ceil(base + base * RETRY_JITTER_FACTOR * random), RETRY_MAX_DELAY)
 }
 
 export function retryable(error: Err, provider: string) {
@@ -93,8 +55,9 @@ export function retryable(error: Err, provider: string) {
       !error.data.isRetryable &&
       !(status !== undefined && status >= 500) &&
       !matchesRetryableMessage(error.data.message) &&
-      !matchesRetryableMessage(error.data.responseBody)
-    ) return undefined
+      !matchesRetryableResponse(error.data.responseBody)
+    )
+      return undefined
     if (error.data.responseBody?.includes("FreeUsageLimitError")) {
       return {
         message: GO_UPSELL_MESSAGE,
@@ -171,6 +134,15 @@ function matchesRetryableMessage(value: unknown) {
   return typeof value === "string" && RETRYABLE_MESSAGE_PATTERNS.some((pattern) => pattern.test(value))
 }
 
+function matchesRetryableResponse(value: unknown) {
+  const body = parseJSON(value)
+  if (!isRecord(body)) return matchesRetryableMessage(value)
+  const error = isRecord(body.error) ? body.error : {}
+  return [body.message, body.code, body.type, body.error, error.message, error.code, error.type].some(
+    matchesRetryableMessage,
+  )
+}
+
 function str(value: unknown) {
   if (value === undefined || value === null) return ""
   return String(value)
@@ -205,7 +177,7 @@ export function policy(opts: {
       if (!retry) return Cause.done(meta.attempt)
       if (meta.attempt > RETRY_MAX_RETRIES) return Cause.done(meta.attempt)
       return Effect.gen(function* () {
-        const wait = delay(meta.attempt, SessionV1.APIError.isInstance(error) ? error : undefined)
+        const wait = delay(meta.attempt)
         const now = yield* Clock.currentTimeMillis
         yield* opts.set({
           attempt: meta.attempt,

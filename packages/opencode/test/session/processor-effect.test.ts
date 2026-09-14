@@ -661,59 +661,117 @@ it.live("session.processor effect tests retry network_error finish reasons", () 
   ),
 )
 
-it.live("session.processor effect tests publish retry status updates", () =>
-  provideTmpdirServer(
-    ({ dir, llm }) =>
-      Effect.gen(function* () {
-        const { processors, session, provider } = yield* boot()
-        const events = yield* EventV2Bridge.Service
+for (const succeeds of [true, false])
+  it.live(
+    `session.processor effect tests publish SSE retry status before ${succeeds ? "success" : "terminal failure"}`,
+    () =>
+      provideTmpdirServer(
+        ({ dir, llm }) =>
+          Effect.gen(function* () {
+            const { processors, session, provider } = yield* boot()
+            const events = yield* EventV2Bridge.Service
 
-        yield* llm.error(503, { error: "boom" })
-        yield* llm.text("")
+            yield* llm.push(
+              raw({
+                chunks: [
+                  {
+                    error: {
+                      message: "Upstream API error: 429",
+                      reason: "Upstream rate limit",
+                      upstream: { status_code: 429 },
+                    },
+                  },
+                ],
+              }),
+            )
+            const gate = Promise.withResolvers<void>()
+            if (succeeds) yield* llm.hold("Recovered after retry", gate.promise)
+            if (!succeeds) yield* llm.error(401, { error: { message: "API key is invalid" } })
 
-        const chat = yield* session.create({})
-        const parent = yield* user(chat.id, "retry")
-        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
-        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
-        const states: number[] = []
-        const off = yield* events.listen((evt) => {
-          if (evt.type !== SessionStatus.Event.Status.type) return Effect.void
-          const data = evt.data as typeof SessionStatus.Event.Status.data.Type
-          if (data.sessionID === chat.id && data.status.type === "retry") states.push(data.status.attempt)
-          return Effect.void
-        })
-        const handle = yield* processors.create({
-          assistantMessage: msg,
-          sessionID: chat.id,
-          model: mdl,
-        })
+            const chat = yield* session.create({})
+            const parent = yield* user(chat.id, "retry")
+            const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+            const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+            const states: SessionStatus.Info[] = []
+            const errors: unknown[] = []
+            const off = yield* events.listen((evt) => {
+              if (evt.type === Session.Event.Error.type) {
+                const data = evt.data as typeof Session.Event.Error.data.Type
+                if (data.sessionID === chat.id) errors.push(data.error)
+              }
+              if (evt.type !== SessionStatus.Event.Status.type) return Effect.void
+              const data = evt.data as typeof SessionStatus.Event.Status.data.Type
+              if (data.sessionID === chat.id) states.push(data.status)
+              return Effect.void
+            })
+            const handle = yield* processors.create({
+              assistantMessage: msg,
+              sessionID: chat.id,
+              model: mdl,
+            })
 
-        const value = yield* handle.process({
-          user: {
-            id: parent.id,
-            sessionID: chat.id,
-            role: "user",
-            time: parent.time,
-            agent: parent.agent,
-            model: { providerID: ref.providerID, modelID: ref.modelID },
-          } satisfies SessionV1.User,
-          sessionID: chat.id,
-          model: mdl,
-          agent: agent(),
-          system: [],
-          messages: [{ role: "user", content: "retry" }],
-          tools: {},
-        })
+            const started = Date.now()
+            const run = yield* handle
+              .process({
+                user: {
+                  id: parent.id,
+                  sessionID: chat.id,
+                  role: "user",
+                  time: parent.time,
+                  agent: parent.agent,
+                  model: { providerID: ref.providerID, modelID: ref.modelID },
+                } satisfies SessionV1.User,
+                sessionID: chat.id,
+                model: mdl,
+                agent: agent(),
+                system: [],
+                messages: [{ role: "user", content: "retry" }],
+                tools: {},
+              })
+              .pipe(Effect.forkChild)
 
-        yield* off
+            if (succeeds) {
+              yield* llm.wait(2)
+              const status = yield* SessionStatus.Service
+              const waiting = yield* status.get(chat.id)
+              gate.resolve()
+              expect(waiting).toMatchObject({ type: "retry", attempt: 1 })
+            }
+            const value = yield* Fiber.join(run)
 
-        expect(value).toBe("continue")
-        expect(yield* llm.calls).toBe(2)
-        expect(states).toStrictEqual([1])
-      }),
-    { config: (url) => providerCfg(url) },
-  ),
-)
+            yield* off
+
+            expect(value).toBe(succeeds ? "continue" : "stop")
+            expect(yield* llm.calls).toBe(2)
+            expect(states.map((state) => state.type)).toStrictEqual(
+              succeeds ? ["busy", "retry", "busy"] : ["busy", "retry", "idle"],
+            )
+            const retry = states.find((state) => state.type === "retry")
+            expect(retry?.attempt).toBe(1)
+            expect(retry?.message).toContain("429")
+            expect(retry?.next).toBeGreaterThan(started)
+            expect(retry?.next).toBeLessThanOrEqual(Date.now())
+            expect(handle.message.time.completed).toBeDefined()
+            if (succeeds) {
+              expect(handle.message.error).toBeUndefined()
+              expect(errors).toEqual([])
+              expect(
+                (yield* MessageV2.parts(msg.id)).some(
+                  (part) => part.type === "text" && part.text === "Recovered after retry",
+                ),
+              ).toBe(true)
+            }
+            if (!succeeds) {
+              expect(handle.message.error).toMatchObject({
+                name: "APIError",
+                data: { statusCode: 401, message: "API key is invalid" },
+              })
+              expect(errors).toEqual([handle.message.error])
+            }
+          }),
+        { config: (url) => providerCfg(url) },
+      ),
+  )
 
 it.live("session.processor effect tests compact on structured context overflow", () =>
   provideTmpdirServer(

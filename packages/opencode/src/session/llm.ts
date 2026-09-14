@@ -405,8 +405,10 @@ const live: Layer.Layer<
             }),
           )
         },
-        // Copilot returns the authoritative billed amount only in provider-specific response fields.
-        includeRawChunks: input.model.providerID.includes("github-copilot"),
+        // Compatible SDKs reduce stream errors to a message; raw chunks preserve diagnostics.
+        // Copilot also returns the authoritative billed amount in raw response fields.
+        includeRawChunks:
+          input.model.api.npm === "@ai-sdk/openai-compatible" || input.model.providerID.includes("github-copilot"),
         async experimental_repairToolCall(failed) {
           const lower = failed.toolCall.toolName.toLowerCase()
           if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {

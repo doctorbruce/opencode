@@ -2,10 +2,10 @@ import { Question } from "@/question"
 import { QuestionID } from "@/question/schema"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { InstanceHttpApi } from "../api"
+import { SharedInstanceHttpApi } from "../shared-api"
 import { QuestionNotFoundError } from "../errors"
 
-export const questionHandlers = HttpApiBuilder.group(InstanceHttpApi, "question", (handlers) =>
+export const questionHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "question", (handlers) =>
   Effect.gen(function* () {
     const svc = yield* Question.Service
 

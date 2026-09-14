@@ -645,10 +645,10 @@ export const layer = Layer.effect(
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
         return yield* Effect.gen(function* () {
+          yield* status.set(ctx.sessionID, { type: "busy" })
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
-            yield* status.set(ctx.sessionID, { type: "busy" })
             const streamRequestedAt = Date.now()
             const stream = llm.stream(streamInput)
             const observed = { firstEvent: false, firstDelta: false, firstReasoningDelta: false, firstTextDelta: false }
@@ -663,6 +663,17 @@ export const layer = Layer.effect(
             yield* stream.pipe(
               Stream.tap((event) =>
                 Effect.gen(function* () {
+                  // Keep retry visible while the new request is still waiting for useful output.
+                  if (
+                    (((event.type === "text-delta" ||
+                      event.type === "reasoning-delta" ||
+                      event.type === "tool-input-delta") &&
+                      event.text.length > 0) ||
+                      event.type === "tool-call") &&
+                    (yield* status.get(ctx.sessionID)).type === "retry"
+                  ) {
+                    yield* status.set(ctx.sessionID, { type: "busy" })
+                  }
                   if (!observed.firstEvent) {
                     observed.firstEvent = true
                     yield* Effect.logInfo("llm first event", {
@@ -717,6 +728,10 @@ export const layer = Layer.effect(
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
+            // A successful empty response can finish without a content delta.
+            if ((yield* status.get(ctx.sessionID)).type === "retry") {
+              yield* status.set(ctx.sessionID, { type: "busy" })
+            }
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {

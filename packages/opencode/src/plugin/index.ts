@@ -9,6 +9,7 @@ import type {
 import { Config } from "@/config/config"
 import { createOpencodeClient } from "@opencode-ai/sdk"
 import { ServerAuth } from "@/server/auth"
+import { ServerAddress } from "@/server/address"
 import { CodexAuthPlugin } from "./openai/codex"
 import { Session } from "@/session/session"
 import { NamedError } from "@opencode-ai/core/util/error"
@@ -138,14 +139,19 @@ export const layer = Layer.effect(
           bridge.fork(events.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
         }
 
-        const { Server } = yield* Effect.promise(() => import("../server/server"))
-
-        const serverUrl = Server.url
+        const serverUrl = ServerAddress.url
         const client = createOpencodeClient({
           baseUrl: serverUrl?.toString() ?? "http://localhost:4096",
           directory: ctx.directory,
           headers: ServerAuth.headers(),
-          ...(serverUrl ? {} : { fetch: async (...args) => Server.Default().app.fetch(...args) }),
+          ...(serverUrl
+            ? {}
+            : {
+                fetch: async (request) => {
+                  const { Server } = await import("../server/server")
+                  return Server.Default().app.fetch(request)
+                },
+              }),
         })
         const cfg = yield* config.get()
         const input: PluginInput = {
@@ -159,7 +165,7 @@ export const layer = Layer.effect(
             },
           },
           get serverUrl(): URL {
-            return Server.url ?? new URL("http://localhost:4096")
+            return ServerAddress.url ?? new URL("http://localhost:4096")
           },
           // @ts-expect-error
           $: typeof Bun === "undefined" ? undefined : Bun.$,

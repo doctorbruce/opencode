@@ -2,6 +2,7 @@ export * as ConfigRuntime from "./runtime"
 
 import { Agent } from "@/agent/agent"
 import { InstanceState } from "@/effect/instance-state"
+import { Provider } from "@/provider/provider"
 import { Skill } from "@/skill"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { KeyedMutex } from "@opencode-ai/core/effect/keyed-mutex"
@@ -42,6 +43,7 @@ export const layer = Layer.effect(
     const agent = yield* Agent.Service
     const config = yield* Config.Service
     const fs = yield* FSUtil.Service
+    const provider = yield* Provider.Service
     const skill = yield* Skill.Service
     const scope = yield* Scope.Scope
     const publication = Semaphore.makeUnsafe(1)
@@ -96,6 +98,7 @@ export const layer = Layer.effect(
 
     const refreshAt = Effect.fnUntraced(function* (directory: string, target: number) {
       yield* config.reload()
+      yield* provider.reload()
       yield* agent.reload()
       yield* skill.reload()
       applied.set(directory, target)
@@ -161,11 +164,12 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Agent.defaultLayer),
   Layer.provide(Config.defaultLayer),
   Layer.provide(FSUtil.defaultLayer),
+  Layer.provide(Provider.defaultLayer),
   Layer.provide(Skill.defaultLayer),
 )
 
 export const node = LayerNode.make({
   service: Service,
   layer,
-  deps: [Agent.node, Config.node, FSUtil.node, Skill.node],
+  deps: [Agent.node, Config.node, FSUtil.node, Provider.node, Skill.node],
 })

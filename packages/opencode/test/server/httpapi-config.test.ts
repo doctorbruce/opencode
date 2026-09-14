@@ -94,6 +94,88 @@ describe("config HttpApi", () => {
   )
 
   it.live(
+    "reloads provider models in loaded instances after global config invalidation",
+    Effect.gen(function* () {
+      const provider = {
+        name: "Runtime Test Provider",
+        npm: "@ai-sdk/openai-compatible",
+        options: { apiKey: "test-key" },
+        models: {
+          "old-model": { name: "Old Model" },
+        },
+      }
+      const tmp = yield* tmpdirEffect({
+        config: {
+          formatter: false,
+          lsp: false,
+          provider: {
+            "runtime-test": provider,
+          },
+        },
+      })
+
+      const before = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/config/providers", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+      expect(before.status).toBe(200)
+      const beforeProvider = (yield* Effect.promise(() => before.json())).providers.find(
+        (item: { id: string }) => item.id === "runtime-test",
+      )
+      expect(Object.keys(beforeProvider.models)).toEqual(["old-model"])
+
+      yield* Effect.promise(() =>
+        Bun.write(
+          path.join(tmp.path, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            formatter: false,
+            lsp: false,
+            provider: {
+              "runtime-test": {
+                ...provider,
+                models: {
+                  ...provider.models,
+                  "new-model": { name: "New Model" },
+                },
+              },
+            },
+          }),
+        ),
+      )
+
+      const invalidated = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request(GlobalPaths.configInvalidate, {
+            method: "POST",
+          }),
+        ),
+      )
+      expect(invalidated.status).toBe(200)
+
+      const after = yield* Effect.promise(() =>
+        Promise.resolve(
+          app().request("/config/providers", {
+            headers: {
+              "x-opencode-directory": tmp.path,
+            },
+          }),
+        ),
+      )
+      expect(after.status).toBe(200)
+      const afterProvider = (yield* Effect.promise(() => after.json())).providers.find(
+        (item: { id: string }) => item.id === "runtime-test",
+      )
+      expect(Object.keys(afterProvider.models)).toEqual(["old-model", "new-model"])
+    }),
+  )
+
+  it.live(
     "does not create a cold instance during global config invalidation",
     Effect.gen(function* () {
       const tmp = yield* tmpdirEffect({

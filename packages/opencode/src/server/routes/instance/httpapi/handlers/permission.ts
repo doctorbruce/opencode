@@ -2,10 +2,10 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Permission } from "@/permission"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { InstanceHttpApi } from "../api"
+import { SharedInstanceHttpApi } from "../shared-api"
 import { PermissionNotFoundError } from "../errors"
 
-export const permissionHandlers = HttpApiBuilder.group(InstanceHttpApi, "permission", (handlers) =>
+export const permissionHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "permission", (handlers) =>
   Effect.gen(function* () {
     const svc = yield* Permission.Service
 

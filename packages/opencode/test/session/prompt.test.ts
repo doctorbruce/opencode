@@ -736,7 +736,64 @@ it.instance("prompt emits a prompt-scoped failed event when the assistant finish
     expect(event.error).toMatchObject({
       name: "ContextOverflowError",
       message: expect.stringContaining("request entity too large"),
+      data: {
+        message: expect.stringContaining("request entity too large"),
+        responseBody: expect.stringContaining("request entity too large"),
+      },
     })
+  }),
+)
+
+it.instance("prompt failed event preserves structured gateway diagnostics", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const events = yield* EventV2Bridge.Service
+    const received = yield* Deferred.make<Record<string, unknown>>()
+    const chat = yield* sessions.create({ title: "Gateway failure" })
+    const unsubscribe = yield* events.listen((event) => {
+      if (event.type === "prompt.failed")
+        Deferred.doneUnsafe(received, Effect.succeed(event.data as Record<string, unknown>))
+      return Effect.void
+    })
+    yield* Effect.addFinalizer(() => unsubscribe)
+    yield* llm.push(
+      raw({
+        chunks: [
+          {
+            error: {
+              message: "Upstream API error: 400",
+              reason: "Invalid model parameter",
+              upstream: { status_code: 400, headers: { "x-request-id": "req-gateway" } },
+              request: { provider: "test", model: "test-model", key: "private-key" },
+            },
+          },
+        ],
+      }),
+    )
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      parts: [{ type: "text", text: "hello" }],
+    })
+    const event = yield* awaitWithTimeout(Deferred.await(received), "timed out waiting for prompt.failed", "2 seconds")
+    expect(event.error).toMatchObject({
+      name: "APIError",
+      message: "Upstream API error: 400",
+      data: {
+        statusCode: 400,
+        isRetryable: false,
+        metadata: {
+          reason: "Invalid model parameter",
+          requestId: "req-gateway",
+          provider: "test",
+          model: "test-model",
+        },
+        responseBody: expect.stringContaining("req-gateway"),
+      },
+    })
+    expect(JSON.stringify(event.error)).not.toContain("private-key")
   }),
 )
 

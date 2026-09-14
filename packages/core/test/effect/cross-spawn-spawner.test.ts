@@ -277,6 +277,26 @@ describe("cross-spawn spawner", () => {
     )
 
     fx.effect(
+      "kill settles after the process exits while inherited output remains open",
+      Effect.gen(function* () {
+        const handle = yield* js(
+          [
+            'const { spawn } = require("node:child_process")',
+            'const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 2_000)"], {',
+            '  detached: true, stdio: ["ignore", 1, 2], windowsHide: true,',
+            "})",
+            "child.unref()",
+          ].join("\n"),
+        )
+        expect(yield* Effect.promise(() => gone(Number(handle.pid)))).toBe(true)
+
+        const started = Date.now()
+        yield* handle.kill({ forceKillAfter: 100 })
+        expect(Date.now() - started).toBeLessThan(1_000)
+      }),
+    )
+
+    fx.effect(
       "isRunning reflects process state",
       Effect.gen(function* () {
         const handle = yield* js('process.stdout.write("done")')

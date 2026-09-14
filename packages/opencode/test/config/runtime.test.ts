@@ -3,6 +3,7 @@ import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
 import { ConfigRuntime } from "@/config/runtime"
 import { InstanceRef } from "@/effect/instance-ref"
+import { Provider } from "@/provider/provider"
 import type { InstanceContext } from "@/project/instance-context"
 import { Skill } from "@/skill"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -37,6 +38,11 @@ function runtimeLayer(reload: Config.Interface["reload"]) {
     Layer.provide(
       Layer.mock(Agent.Service)({
         reload: () => Effect.succeed([]),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(Provider.Service)({
+        reload: () => Effect.succeed({}),
       }),
     ),
     Layer.provide(

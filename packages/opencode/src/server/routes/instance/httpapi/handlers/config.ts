@@ -4,10 +4,10 @@ import { Provider } from "@/provider/provider"
 import * as InstanceState from "@/effect/instance-state"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { InstanceHttpApi } from "../api"
+import { SharedInstanceHttpApi } from "../shared-api"
 import { markInstanceForDisposal } from "../lifecycle"
 
-export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (handlers) =>
+export const configHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "config", (handlers) =>
   Effect.gen(function* () {
     const configRuntime = yield* ConfigRuntime.Service
     const providerSvc = yield* Provider.Service

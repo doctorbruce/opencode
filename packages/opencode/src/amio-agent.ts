@@ -1,102 +1,39 @@
-import yargs from "yargs"
-import { hideBin } from "yargs/helpers"
-import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { EOL } from "os"
-import { AmioAgentCommands, installAmioAgentEnvironment } from "./cli/amio-agent"
-import { UI } from "./cli/ui"
-import { Installation } from "./installation"
-import { FormatError } from "./cli/error"
-import { errorMessage } from "./util/error"
-import { Heap } from "./cli/heap"
+import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
+import { AmioAgentHelp, installAmioAgentEnvironment, parseAmioAgentArgs, serveAmioAgent } from "./cli/amio-agent"
 
 installAmioAgentEnvironment()
 
-const args = hideBin(process.argv)
-
-function show(out: string) {
-  const text = out.trimStart()
-  if (!text.startsWith("amio-agent ")) {
-    process.stderr.write(UI.logo() + EOL + EOL)
-    process.stderr.write(text)
-    return
-  }
-  process.stderr.write(out)
-}
-
-const cli = yargs(args)
-  .parserConfiguration({ "populate--": true })
-  .scriptName("amio-agent")
-  .wrap(100)
-  .help("help", "show help")
-  .alias("help", "h")
-  .version("version", "show version number", InstallationVersion)
-  .alias("version", "v")
-  .option("print-logs", {
-    describe: "print logs to stderr",
-    type: "boolean",
-  })
-  .option("log-level", {
-    describe: "log level",
-    type: "string",
-    choices: ["DEBUG", "INFO", "WARN", "ERROR"],
-  })
-  .option("pure", {
-    describe: "run without external plugins",
-    type: "boolean",
-  })
-  .middleware(async (opts) => {
-    if (opts.printLogs) process.env.OPENCODE_PRINT_LOGS = "1"
-    if (opts.logLevel) process.env.OPENCODE_LOG_LEVEL = opts.logLevel
-    if (opts.pure) {
-      process.env.OPENCODE_PURE = "1"
-    }
-
-    if (Installation.isLocal() && !process.env.OPENCODE_LOG_LEVEL) process.env.OPENCODE_LOG_LEVEL = "DEBUG"
-
-    Heap.start()
-
-    process.env.AGENT = "1"
-    process.env.OPENCODE = "1"
-    process.env.OPENCODE_PID = String(process.pid)
-  })
-  .usage("")
-
-for (const command of AmioAgentCommands) {
-  cli.command(command)
-}
-
-cli
-  .fail((msg, err) => {
-    if (
-      msg?.startsWith("Unknown argument") ||
-      msg?.startsWith("Not enough non-option arguments") ||
-      msg?.startsWith("Invalid values:")
-    ) {
-      if (err) throw err
-      cli.showHelp(show)
-    }
-    if (err) throw err
-    process.exit(1)
-  })
-  .strict()
-
 try {
-  if (args.includes("-h") || args.includes("--help")) {
-    await cli.parse(args, (err: Error | undefined, _argv: unknown, out: string) => {
-      if (err) throw err
-      if (!out) return
-      show(out)
-    })
-  } else {
-    await cli.parse()
+  const args = parseAmioAgentArgs(process.argv.slice(2))
+  if (args.action === "help") {
+    process.stdout.write(AmioAgentHelp)
+    process.exit(0)
   }
-} catch (e) {
-  const formatted = FormatError(e)
-  if (formatted) UI.error(formatted)
-  if (formatted === undefined) {
-    UI.error("Unexpected error" + EOL)
-    process.stderr.write(errorMessage(e) + EOL)
+  if (args.action === "version") {
+    process.stdout.write(InstallationVersion + "\n")
+    process.exit(0)
   }
+
+  if (args.printLogs) process.env.OPENCODE_PRINT_LOGS = "1"
+  if (args.logLevel) process.env.OPENCODE_LOG_LEVEL = args.logLevel
+  if (args.pure) process.env.OPENCODE_PURE = "1"
+  if (InstallationChannel === "local" && !process.env.OPENCODE_LOG_LEVEL) process.env.OPENCODE_LOG_LEVEL = "DEBUG"
+
+  const heapSnapshot = process.env.OPENCODE_AUTO_HEAP_SNAPSHOT?.toLowerCase()
+  if (heapSnapshot === "1" || heapSnapshot === "true") {
+    const { Heap } = await import("./cli/heap")
+    Heap.start()
+  }
+
+  process.env.AGENT = "1"
+  process.env.OPENCODE = "1"
+  process.env.OPENCODE_PID = String(process.pid)
+
+  const server = await serveAmioAgent(args)
+  console.log(`opencode server listening on http://${server.hostname}:${server.port}`)
+  await new Promise<void>(() => {})
+} catch (error) {
+  process.stderr.write((error instanceof Error ? error.message : String(error)) + "\n")
   process.exitCode = 1
 } finally {
   process.exit()

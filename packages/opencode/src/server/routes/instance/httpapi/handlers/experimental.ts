@@ -17,7 +17,7 @@ import { AbsolutePath } from "@opencode-ai/core/schema"
 import { Effect, Layer, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
-import { InstanceHttpApi } from "../api"
+import { SharedInstanceHttpApi } from "../shared-api"
 import {
   ConsoleSwitchPayload,
   LocationPrewarmQuery,
@@ -32,7 +32,7 @@ function mapWorktreeError<A, R>(self: Effect.Effect<A, Worktree.Error, R>) {
   )
 }
 
-export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "experimental", (handlers) =>
+export const experimentalHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "experimental", (handlers) =>
   Effect.gen(function* () {
     const account = yield* Account.Service
     const agents = yield* Agent.Service
@@ -124,11 +124,7 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       const ctx = yield* InstanceState.context
       yield* Effect.gen(function* () {
         yield* Location.Service
-      }).pipe(
-        Effect.provide(
-          locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) })),
-        ),
-      )
+      }).pipe(Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(ctx.directory) }))))
       if (input.query.provider && input.query.model) {
         let agent = yield* agents.defaultInfo()
         if (input.query.agent) {
