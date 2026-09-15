@@ -108,6 +108,20 @@ describe("tool parameters", () => {
   })
 
   describe("shell", () => {
+    test("exposes validated output declarations on shell and patch", () => {
+      const outputs = [{ path: "report.md", artifactRole: "final" as const }]
+      expect(parse(Shell, { command: "generate", outputs }).outputs).toEqual(outputs)
+      expect(parse(ApplyPatch, { patchText: "patch", outputs }).outputs).toEqual(outputs)
+      for (const item of [
+        { path: "report.pdf" },
+        { path: "report.pdf", artifactRole: "unknown" },
+        { path: "", artifactRole: "final" },
+      ]) {
+        expect(accepts(Shell, { command: "generate", outputs: [item] })).toBe(false)
+        expect(accepts(ApplyPatch, { patchText: "patch", outputs: [item] })).toBe(false)
+      }
+    })
+
     test("accepts command", () => {
       expect(parse(Shell, { command: "ls" })).toEqual({ command: "ls" })
     })

@@ -14,9 +14,14 @@ import DESCRIPTION from "./apply_patch.txt"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { Format } from "../format"
 import * as Bom from "@/util/bom"
+import { Artifact } from "./artifact"
 
 export const Parameters = Schema.Struct({
   patchText: Schema.String.annotate({ description: "The full patch text that describes all changes to be made" }),
+  outputs: Schema.optional(Artifact.Outputs).annotate({
+    description:
+      "Files to report from this patch. Paths must be added/updated files or move destinations; relative paths resolve from the workspace directory. If omitted, all surviving changed files are intermediate. An empty list reports none.",
+  }),
 })
 
 export const ApplyPatchTool = Tool.define(
@@ -190,6 +195,19 @@ export const ApplyPatchTool = Tool.define(
         }
       }
 
+      const targets = new Set(
+        fileChanges.filter((change) => change.type !== "delete").map((change) => change.movePath ?? change.filePath),
+      )
+      const outputs = params.outputs
+        ? params.outputs.map((item) => ({ ...item, path: path.resolve(instance.directory, item.path) }))
+        : [...targets].map((target) => ({ path: target, artifactRole: "intermediate" as const }))
+      for (const item of outputs) {
+        if (!targets.has(item.path))
+          return yield* Effect.fail(
+            new Error(`Declared output is not a surviving file changed by this patch: ${item.path}`),
+          )
+      }
+
       // Build per-file metadata for UI rendering (used for both permission and result)
       const files = fileChanges.map((change) => ({
         filePath: change.filePath,
@@ -298,6 +316,7 @@ export const ApplyPatchTool = Tool.define(
           diff: totalDiff,
           files,
           diagnostics,
+          outputs,
         },
         output,
       }

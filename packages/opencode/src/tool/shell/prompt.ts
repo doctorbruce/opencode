@@ -3,6 +3,7 @@ import DESCRIPTION from "./shell.txt"
 import { PositiveInt } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
 import { ShellID } from "./id"
+import { Artifact } from "../artifact"
 
 const PS = new Set(["powershell", "pwsh"])
 const CMD = new Set(["cmd"])
@@ -18,6 +19,10 @@ export function parameterSchema() {
     timeout: Schema.optional(PositiveInt).annotate({ description: "Optional timeout in milliseconds" }),
     workdir: Schema.optional(Schema.String).annotate({
       description: `The working directory to run the command in. Defaults to the current directory. Use this instead of 'cd' commands.`,
+    }),
+    outputs: Schema.optional(Artifact.Outputs).annotate({
+      description:
+        "Files this command will deliver. Relative paths resolve from workdir. Only declared existing files are reported after exit code 0; no directory scanning. Omit for commands without file deliverables.",
     }),
   })
 }

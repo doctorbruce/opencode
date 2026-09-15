@@ -13,6 +13,7 @@ import { Truncate } from "@/tool/truncate"
 import { TestInstance } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
+import { Tool } from "../../src/tool/tool"
 
 const it = testEffect(
   Layer.mergeAll(
@@ -58,7 +59,10 @@ type ToolCtx = typeof baseCtx & {
   ask: (input: AskInput) => Effect.Effect<void>
 }
 
-const execute = Effect.fn("ApplyPatchToolTest.execute")(function* (params: { patchText: string }, ctx: ToolCtx) {
+const execute = Effect.fn("ApplyPatchToolTest.execute")(function* (
+  params: Tool.InferParameters<typeof ApplyPatchTool>,
+  ctx: ToolCtx,
+) {
   const info = yield* ApplyPatchTool
   const tool = yield* info.init()
   return yield* tool.execute(params, ctx)
@@ -91,6 +95,53 @@ const expectFailure = <A, E, R>(effect: Effect.Effect<A, E, R>, message?: string
 const expectReadFailure = (filepath: string) => expectFailure(readText(filepath))
 
 describe("tool.apply_patch freeform", () => {
+  it.instance("reports moved artifact destinations and excludes deleted files", () =>
+    Effect.gen(function* () {
+      const instance = yield* TestInstance
+      const afs = yield* FSUtil.Service
+      yield* afs.writeWithDirs(path.join(instance.directory, "draft.md"), "draft\n")
+      yield* afs.writeWithDirs(path.join(instance.directory, "remove.txt"), "remove\n")
+      const context = makeCtx()
+      const result = yield* execute(
+        {
+          patchText:
+            "*** Begin Patch\n*** Update File: draft.md\n*** Move to: final.md\n@@\n-draft\n+final\n*** Delete File: remove.txt\n*** End Patch",
+          outputs: [{ path: "final.md", artifactRole: "final" }],
+        },
+        context.ctx,
+      )
+      expect(result.metadata.outputs).toEqual([
+        { path: path.join(instance.directory, "final.md"), artifactRole: "final" },
+      ])
+      const implicit = yield* execute(
+        { patchText: "*** Begin Patch\n*** Add File: support.svg\n+support\n*** End Patch" },
+        context.ctx,
+      )
+      expect(implicit.metadata.outputs).toEqual([
+        { path: path.join(instance.directory, "support.svg"), artifactRole: "intermediate" },
+      ])
+    }),
+  )
+
+  it.instance("rejects unrelated declared outputs before applying a patch", () =>
+    Effect.gen(function* () {
+      const instance = yield* TestInstance
+      const context = makeCtx()
+      yield* expectFailure(
+        execute(
+          {
+            patchText: "*** Begin Patch\n*** Add File: report.md\n+report\n*** End Patch",
+            outputs: [{ path: "other-session.pdf", artifactRole: "final" }],
+          },
+          context.ctx,
+        ),
+        "not a surviving file",
+      )
+      const afs = yield* FSUtil.Service
+      expect(yield* afs.existsSafe(path.join(instance.directory, "report.md"))).toBe(false)
+    }),
+  )
+
   it.live("requires patchText", () =>
     Effect.gen(function* () {
       const { ctx } = makeCtx()

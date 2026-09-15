@@ -18,6 +18,7 @@ import { Snapshot } from "@/snapshot"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Bom from "@/util/bom"
+import { Artifact } from "./artifact"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -45,6 +46,9 @@ function lock(filePath: string) {
 }
 
 export const Parameters = Schema.Struct({
+  artifactRole: Schema.optional(Artifact.Role).annotate({
+    description: "Role of this edited file. Defaults to intermediate; explicitly use final for user deliverables.",
+  }),
   filePath: Schema.String.annotate({ description: "The absolute path to the file to modify" }),
   oldString: Schema.String.annotate({ description: "The text to replace" }),
   newString: Schema.String.annotate({
@@ -205,6 +209,7 @@ export const EditTool = Tool.define(
               diagnostics,
               diff,
               filediff,
+              outputs: [{ path: filePath, artifactRole: params.artifactRole ?? "intermediate" }],
             },
             title: `${path.relative(instance.worktree, filePath)}`,
             output,

@@ -94,6 +94,18 @@ const onceBus = Effect.fn("EditToolTest.onceBus")(function* (def: typeof Watcher
 })
 
 describe("tool.edit", () => {
+  it.instance("reports explicit artifact roles and defaults supporting edits to intermediate", () =>
+    Effect.gen(function* () {
+      const instance = yield* TestInstance
+      const filePath = path.join(instance.directory, "report.md")
+      yield* put(filePath, "draft")
+      const final = yield* run({ filePath, oldString: "draft", newString: "final", artifactRole: "final" })
+      expect(final.metadata.outputs).toEqual([{ path: filePath, artifactRole: "final" }])
+      const supporting = yield* run({ filePath, oldString: "final", newString: "supporting" })
+      expect(supporting.metadata.outputs).toEqual([{ path: filePath, artifactRole: "intermediate" }])
+    }),
+  )
+
   describe("creating new files", () => {
     it.instance("creates new file when oldString is empty", () =>
       Effect.gen(function* () {

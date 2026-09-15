@@ -4,6 +4,33 @@ exports[`tool parameters JSON Schema (wire shape) apply_patch 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "outputs": {
+      "description": "Files to report from this patch. Paths must be added/updated files or move destinations; relative paths resolve from the workspace directory. If omitted, all surviving changed files are intermediate. An empty list reports none.",
+      "items": {
+        "properties": {
+          "artifactRole": {
+            "description": "Use final only for requested user-facing deliverables, including Markdown and JSON; use intermediate or temporary for supporting files.",
+            "enum": [
+              "final",
+              "intermediate",
+              "temporary",
+            ],
+            "type": "string",
+          },
+          "path": {
+            "description": "Output file path, not a directory or glob.",
+            "minLength": 1,
+            "type": "string",
+          },
+        },
+        "required": [
+          "path",
+          "artifactRole",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
     "patchText": {
       "description": "The full patch text that describes all changes to be made",
       "type": "string",
@@ -23,6 +50,33 @@ exports[`tool parameters JSON Schema (wire shape) bash 1`] = `
     "command": {
       "description": "The command to execute",
       "type": "string",
+    },
+    "outputs": {
+      "description": "Files this command will deliver. Relative paths resolve from workdir. Only declared existing files are reported after exit code 0; no directory scanning. Omit for commands without file deliverables.",
+      "items": {
+        "properties": {
+          "artifactRole": {
+            "description": "Use final only for requested user-facing deliverables, including Markdown and JSON; use intermediate or temporary for supporting files.",
+            "enum": [
+              "final",
+              "intermediate",
+              "temporary",
+            ],
+            "type": "string",
+          },
+          "path": {
+            "description": "Output file path, not a directory or glob.",
+            "minLength": 1,
+            "type": "string",
+          },
+        },
+        "required": [
+          "path",
+          "artifactRole",
+        ],
+        "type": "object",
+      },
+      "type": "array",
     },
     "timeout": {
       "description": "Optional timeout in milliseconds",
@@ -47,6 +101,15 @@ exports[`tool parameters JSON Schema (wire shape) edit 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "artifactRole": {
+      "description": "Role of this edited file. Defaults to intermediate; explicitly use final for user deliverables.",
+      "enum": [
+        "final",
+        "intermediate",
+        "temporary",
+      ],
+      "type": "string",
+    },
     "filePath": {
       "description": "The absolute path to the file to modify",
       "type": "string",

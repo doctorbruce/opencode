@@ -178,6 +178,99 @@ const mustTruncate = (result: {
 }
 
 describe("tool.shell", () => {
+  each("reports only validated declared artifacts", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const workspace = yield* tmpdirScoped()
+      const fs = yield* FSUtil.Service
+      yield* fs.writeWithDirs(
+        path.join(tmp, "generate.cjs"),
+        "require('fs').writeFileSync('report.md', 'report'); require('fs').writeFileSync('other-session.pdf', 'other');",
+      )
+      yield* runIn(
+        workspace,
+        Effect.gen(function* () {
+          const command = `${PS.has(sh()) ? "& " : ""}${bin} generate.cjs`
+          const result = yield* run({
+            command,
+            workdir: tmp,
+            outputs: [
+              { path: "report.md", artifactRole: "final" },
+              { path: "generate.cjs", artifactRole: "temporary" },
+              { path: "missing.pdf", artifactRole: "final" },
+              { path: ".", artifactRole: "final" },
+            ],
+          })
+          expect(result.metadata.exit).toBe(0)
+          expect(result.metadata.outputs).toEqual([
+            { path: yield* fs.realPath(path.join(tmp, "report.md")), artifactRole: "final" },
+            { path: yield* fs.realPath(path.join(tmp, "generate.cjs")), artifactRole: "temporary" },
+          ])
+          expect(result.output).toContain("missing.pdf")
+          expect(result.output).toContain("regular file")
+          const undeclared = yield* run({ command, workdir: tmp })
+          expect(undeclared.metadata.outputs).toEqual([])
+        }),
+      )
+    }),
+  )
+
+  it.live("checks declared output directory permissions before command execution", () =>
+    Effect.gen(function* () {
+      const workspace = yield* tmpdirScoped()
+      const external = yield* tmpdirScoped()
+      const fs = yield* FSUtil.Service
+      yield* fs.writeWithDirs(
+        path.join(workspace, "run.cjs"),
+        "require('fs').writeFileSync('executed.txt', 'executed')",
+      )
+      yield* runIn(
+        workspace,
+        Effect.gen(function* () {
+          const error = yield* fail(
+            {
+              command: `${PS.has(sh()) ? "& " : ""}${bin} run.cjs`,
+              outputs: [{ path: path.join(external, "report.md"), artifactRole: "final" }],
+            },
+            {
+              ...ctx,
+              ask: (request) =>
+                request.permission === "external_directory"
+                  ? Effect.die(new Error("external output denied"))
+                  : Effect.void,
+            },
+          )
+          expect(error.message).toContain("external output denied")
+          expect(yield* fs.existsSafe(path.join(workspace, "executed.txt"))).toBe(false)
+        }),
+      )
+    }),
+  )
+
+  each("does not publish artifacts after failure or timeout", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped()
+      const fs = yield* FSUtil.Service
+      yield* fs.writeWithDirs(path.join(tmp, "partial.pdf"), "pre-existing partial result")
+      yield* fs.writeWithDirs(path.join(tmp, "fail.cjs"), "process.exit(1)")
+      yield* fs.writeWithDirs(path.join(tmp, "wait.cjs"), "setInterval(() => {}, 1000)")
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          for (const script of ["fail.cjs", "wait.cjs"]) {
+            const result = yield* run({
+              command: `${PS.has(sh()) ? "& " : ""}${bin} ${script}`,
+              timeout: script === "wait.cjs" ? 30 : 5000,
+              outputs: [{ path: "partial.pdf", artifactRole: "final" }],
+            })
+            expect(result.metadata.exit).toBe(script === "wait.cjs" ? null : 1)
+            expect(result.metadata.outputs).toEqual([])
+          }
+        }),
+      )
+    }),
+  )
+
   each("basic", () =>
     runIn(
       projectRoot,
@@ -242,7 +335,9 @@ describe("tool.shell prompt", () => {
 
     expect(prompt).toContain("Windows PowerShell (5.1)")
     expect(prompt).toContain("Pipeline chain operators `&&` and `||` are NOT available")
-    expect(prompt).toContain("Ternary (`?:`), null-coalescing (`??`), and null-conditional (`?.`) operators are NOT available")
+    expect(prompt).toContain(
+      "Ternary (`?:`), null-coalescing (`??`), and null-conditional (`?.`) operators are NOT available",
+    )
     expect(prompt).toContain("Avoid `2>&1` on native executables")
     expect(prompt).toContain("Default file encoding is UTF-16 LE")
     expect(prompt).toContain("use `${name}:` or the `-f` format operator")
@@ -1064,7 +1159,8 @@ describe("tool.shell abort", () => {
           const collected: string[] = []
           const res = yield* run(
             {
-              command: `echo before && sleep 30`,
+              command: sh() === "powershell" ? "Write-Output before; Start-Sleep 30" : "echo before && sleep 30",
+              outputs: [{ path: "package.json", artifactRole: "final" }],
             },
             {
               ...ctx,
@@ -1081,6 +1177,7 @@ describe("tool.shell abort", () => {
           )
           expect(res.output).toContain("before")
           expect(res.output).toContain("User aborted the command")
+          expect(res.metadata.outputs).toEqual([])
           expect(collected.length).toBeGreaterThan(0)
         }),
       ),
@@ -1159,7 +1256,10 @@ describe("tool.shell abort", () => {
         const updates: string[] = []
         const result = yield* run(
           {
-            command: `echo first && sleep 0.1 && echo second`,
+            command:
+              sh() === "powershell"
+                ? "Write-Output first; Start-Sleep -Milliseconds 100; Write-Output second"
+                : "echo first && sleep 0.1 && echo second",
           },
           {
             ...ctx,

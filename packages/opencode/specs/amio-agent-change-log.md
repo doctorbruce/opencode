@@ -491,3 +491,10 @@ bun run script/build.ts --single --amio-agent --skip-install
 
 - Restored `bun.lock` to its state before the structured tool artifacts commit, removing the unrelated bulk switch to npmmirror download URLs.
 - Kept the structured tool artifacts implementation unchanged.
+
+### V1 tool artifact outputs for Astron
+
+- Added explicit shell `outputs` to the active V1 tool schema and prompt. Only declared regular files are returned as absolute paths in completed `metadata.outputs` after exit code zero; failed, aborted, timed-out, and undeclared commands return an empty list. Output paths use existing external-directory permission checks, including resolved symlink targets; missing files produce warnings without losing the command result.
+- Added optional edit roles and patch output declarations. Undeclared edit/patch files default to intermediate; patches only report surviving mutations and validate declared move destinations before applying changes.
+- Astron treats completed metadata outputs, including empty lists, as authoritative over input, stdout and script inference. This implements the currently registered V1 path without switching Astron to Session V2.
+- Added real shell tests across installed shells and edit/patch artifact regression coverage; corrected the existing streaming test command for Windows PowerShell 5.1.

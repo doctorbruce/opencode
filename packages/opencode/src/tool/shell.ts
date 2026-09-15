@@ -21,6 +21,8 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { assertExternalDirectoryEffect } from "./external-directory"
+import { Artifact } from "./artifact"
 
 export { Parameters } from "./shell/prompt"
 
@@ -627,6 +629,13 @@ export const ShellTool = Tool.define(
                 throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
               }
               const timeout = params.timeout ?? defaultTimeoutMs
+              const declared = yield* Effect.forEach(params.outputs ?? [], (item) =>
+                Effect.gen(function* () {
+                  const filepath = yield* resolvePath(item.path, cwd, shell)
+                  yield* assertExternalDirectoryEffect(ctx, filepath)
+                  return { path: filepath, artifactRole: item.artifactRole }
+                }),
+              )
               const ps = Shell.ps(shell)
               yield* Effect.scoped(
                 Effect.gen(function* () {
@@ -639,7 +648,7 @@ export const ShellTool = Tool.define(
                 }),
               )
 
-              return yield* run(
+              const result = yield* run(
                 {
                   shell,
                   command: params.command,
@@ -649,6 +658,32 @@ export const ShellTool = Tool.define(
                 },
                 ctx,
               )
+              const outputs: Artifact.Output[] = []
+              const warnings: string[] = []
+              if (result.metadata.exit === 0 && !ctx.abort.aborted) {
+                for (const item of declared) {
+                  const canonical = yield* fs.realPath(item.path).pipe(Effect.option)
+                  if (canonical._tag === "None") {
+                    warnings.push(`Declared output is missing or unreadable: ${item.path}`)
+                    continue
+                  }
+                  yield* assertExternalDirectoryEffect(ctx, canonical.value)
+                  const stat = yield* fs.stat(canonical.value).pipe(Effect.option)
+                  if (stat._tag === "None" || stat.value.type !== "File") {
+                    warnings.push(`Declared output is not a readable regular file: ${item.path}`)
+                    continue
+                  }
+                  if (!outputs.some((output) => output.path === canonical.value))
+                    outputs.push({ path: canonical.value, artifactRole: item.artifactRole })
+                }
+              }
+              return {
+                ...result,
+                metadata: { ...result.metadata, outputs },
+                output: warnings.length
+                  ? `${result.output}\n\nArtifact warnings:\n${warnings.join("\n")}`
+                  : result.output,
+              }
             }),
         }
       })
