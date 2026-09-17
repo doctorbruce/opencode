@@ -7,7 +7,10 @@ import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
 import { makeGlobalNode } from "./effect/app-node"
 
-const app = "opencode"
+// Astron Cowork's amio sidecar keeps its per-user state in an `amio` directory tree
+// instead of upstream's `opencode` one. Names for files created inside these
+// directories are derived from this constant; see AGENTS.md for the fork change log.
+const app = "amio"
 const data = path.join(xdgData!, app)
 const cache = path.join(xdgCache!, app)
 const config = path.join(xdgConfig!, app)

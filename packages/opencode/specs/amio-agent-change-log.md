@@ -2,6 +2,15 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-09-17
+
+### Write the runtime layout under `amio` instead of `opencode`
+
+- Renamed the path components this package creates inside its per-user root: the XDG directories resolve to `<XDG_*>/amio`, the database is `amio.db` (`amio-<channel>.db` when channel databases are enabled), and the file log is `<data>/log/amio.log`. The `%TEMP%/amio` scratch directory follows the same constant.
+- Only on-disk names changed. Provider IDs, `@opencode-ai/*` package names and plugin specifiers, `OPENCODE_*` environment variable names, project-level `opencode.json`/`.opencode` discovery, `.git/opencode` project IDs, and `opencode.ai` URLs deliberately keep their upstream spelling.
+- The rename is unconditional for this tree, so a standard `opencode` binary built from this fork also reads and writes `amio` directories.
+- Astron Cowork's launcher owns the sibling names it sets explicitly (`config/amio`, `amio.generated.json`, `state/amio-runtime.{stdout,stderr}.log`) and renames an existing `opencode` layout to `amio` on the next launch, so sessions, credentials, and installed config tool assets carry over. That rename has to ship with a rebuilt `amio-agent` binary: an old binary only knows the `opencode` directory and would recreate an empty database after the launcher moved the data.
+
 ## 2026-09-11
 
 ### Require explicit roles for requested write deliverables
