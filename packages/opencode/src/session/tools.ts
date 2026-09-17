@@ -18,6 +18,7 @@ import { MessageV2 } from "./message-v2"
 import { Session } from "./session"
 import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
+import { ToolProgress } from "./tool-progress"
 import { EffectBridge } from "@/effect/bridge"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -70,9 +71,13 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     .map((tool) => ({ id: tool.id, description: tool.description }))
   const modelFacingTools = selectModelFacingToolDefs({ tools: permittedRegistryTools, messages: input.messages })
 
-  const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
+  const context = (
+    args: Record<string, unknown>,
+    options: ToolExecutionOptions,
+    abort?: AbortSignal,
+  ): Tool.Context => ({
     sessionID: input.session.id,
-    abort: options.abortSignal!,
+    abort: abort ?? options.abortSignal!,
     messageID: input.processor.message.id,
     callID: options.toolCallId,
     extra: {
@@ -116,13 +121,22 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, options) {
         return run.promise(
           Effect.gen(function* () {
-            const ctx = context(args, options)
+            // Each call gets its own abort controller so a silence timeout can
+            // terminate one call without touching the rest of the turn.
+            const perCall = new AbortController()
+            const ctx = context(args, options, ToolProgress.linkAbort(options.abortSignal, perCall))
+            ToolProgress.track({ sessionID: ctx.sessionID, callID: options.toolCallId, tool: item.id })
+            ToolProgress.control(options.toolCallId, {
+              abort: (reason) => perCall.abort(reason),
+            })
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
               { args },
             )
-            const result = yield* item.execute(args, ctx)
+            const executed = yield* item.execute(args, ctx)
+            const silence = ToolProgress.escalation(options.toolCallId)
+            const result = silence ? ToolProgress.silenceResult(executed, silence) : executed
             const output = {
               ...result,
               attachments: result.attachments?.map((attachment) => ({
@@ -410,6 +424,9 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       run.promise(
         Effect.gen(function* () {
           const ctx = context(args, opts)
+          // MCP tools report no incremental output, so the heartbeat is the only
+          // signal that a hung server call is still in flight.
+          ToolProgress.track({ sessionID: ctx.sessionID, callID: opts.toolCallId, tool: key })
           yield* plugin.trigger(
             "tool.execute.before",
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },

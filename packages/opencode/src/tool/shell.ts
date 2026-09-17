@@ -23,6 +23,7 @@ import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Artifact } from "./artifact"
+import { ToolProgress } from "@/session/tool-progress"
 
 export { Parameters } from "./shell/prompt"
 
@@ -577,7 +578,19 @@ export const ShellTool = Tool.define(
           `shell tool terminated command after exceeding timeout ${input.timeout} ms. If this command is expected to take longer and is not waiting for interactive input, retry with a larger timeout value in milliseconds.`,
         )
       }
-      if (aborted) meta.push("User aborted the command")
+      if (aborted) {
+        // Distinguish a silence timeout from a user abort: both surface through
+        // `ctx.abort`, and mislabeling the former makes the model report the
+        // wrong cause to the user.
+        meta.push(
+          ToolProgress.isSilenceReason(ctx.abort.reason)
+            ? `Command terminated by the silence timeout: no output for ${Math.max(
+                1,
+                Math.round(ctx.abort.reason.quietMs / 60_000),
+              )} minutes.`
+            : "User aborted the command",
+        )
+      }
       const raw = list.map((item) => item.text).join("")
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true

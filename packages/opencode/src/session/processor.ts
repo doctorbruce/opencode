@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -17,6 +17,7 @@ import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
+import { ToolProgress } from "./tool-progress"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider/provider"
 import { Question } from "@/question"
@@ -72,6 +73,7 @@ interface ProcessorContext extends Input {
   needsCompaction: boolean
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
+  heartbeat: Fiber.Fiber<void, never> | undefined
 }
 
 type StreamEvent = LLMEvent
@@ -114,6 +116,7 @@ export const layer = Layer.effect(
         needsCompaction: false,
         currentText: undefined,
         reasoningMap: {},
+        heartbeat: undefined,
       }
       let aborted = false
 
@@ -126,6 +129,7 @@ export const layer = Layer.effect(
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
         delete ctx.toolcalls[toolCallID]
+        ToolProgress.settle(toolCallID)
         if (done) yield* Deferred.succeed(done, undefined).pipe(Effect.ignore)
       })
 
@@ -144,7 +148,9 @@ export const layer = Layer.effect(
         return { call, part }
       })
 
-      const updateToolCall = Effect.fn("SessionProcessor.updateToolCall")(function* (
+      // Heartbeat writes must not refresh the silence clock, so they bypass the
+      // public `updateToolCall` entry point.
+      const updateToolCallPart = Effect.fnUntraced(function* (
         toolCallID: string,
         update: (part: SessionV1.ToolPart) => SessionV1.ToolPart,
       ) {
@@ -157,6 +163,15 @@ export const layer = Layer.effect(
           messageID: part.messageID,
           sessionID: part.sessionID,
         }
+        return part
+      })
+
+      const updateToolCall = Effect.fn("SessionProcessor.updateToolCall")(function* (
+        toolCallID: string,
+        update: (part: SessionV1.ToolPart) => SessionV1.ToolPart,
+      ) {
+        const part = yield* updateToolCallPart(toolCallID, update)
+        ToolProgress.refresh(toolCallID)
         return part
       })
 
@@ -251,6 +266,64 @@ export const layer = Layer.effect(
           sessionID: part.sessionID,
         }
         return { call: ctx.toolcalls[input.id], part }
+      })
+
+      const runtimeActivity = (type: SessionStatus.Info["type"]): ToolProgress.RuntimeActivity => {
+        if (type === "busy") return "busy"
+        if (type === "retry") return "waiting"
+        return "idle"
+      }
+
+      const publishToolProgress = Effect.fnUntraced(function* (toolCallID: string, progress: ToolProgress.Progress) {
+        yield* updateToolCallPart(toolCallID, (part) => {
+          if (part.state.status !== "running") return part
+          const metadata = isRecord(part.state.metadata) ? part.state.metadata : {}
+          return { ...part, state: { ...part.state, metadata: { ...metadata, progress } } }
+        })
+      })
+
+      const settleSilentToolCall = Effect.fnUntraced(function* (
+        toolCallID: string,
+        reason: ToolProgress.SilenceReason,
+      ) {
+        const match = yield* readToolCall(toolCallID)
+        if (!match || match.part.state.status !== "running") return
+        const metadata = isRecord(match.part.state.metadata) ? match.part.state.metadata : {}
+        const title = typeof match.part.state.title === "string" && match.part.state.title ? match.part.state.title : ""
+        yield* completeToolCall(toolCallID, {
+          title: title || match.part.tool,
+          metadata: {
+            ...metadata,
+            timeout: true,
+            silence: { quietMs: reason.quietMs, silenceMs: reason.silenceMs },
+            progress: ToolProgress.silenceProgress(reason),
+          },
+          output: `${ToolProgress.silenceNotice(reason)}\n\n${
+            ToolProgress.outputTail(metadata.output) || "(no output before cancellation)"
+          }`,
+        })
+      })
+
+      const toolProgressTick = Effect.fnUntraced(function* () {
+        if (!ToolProgress.tracking(ctx.sessionID)) return
+        const activity = runtimeActivity((yield* status.get(ctx.sessionID)).type)
+        for (const decision of ToolProgress.tick({ sessionID: ctx.sessionID, activity })) {
+          yield* publishToolProgress(decision.callID, decision.progress)
+          if (decision.escalate) {
+            ToolProgress.abort(decision.callID, decision.escalate)
+            continue
+          }
+          if (decision.forceSettle) yield* settleSilentToolCall(decision.callID, decision.forceSettle)
+        }
+      })
+
+      const toolProgressLoop = Effect.fnUntraced(function* () {
+        while (true) {
+          yield* Effect.sleep(ToolProgress.heartbeatMs())
+          yield* toolProgressTick().pipe(
+            Effect.catchCause((cause) => Effect.logWarning("tool progress tick failed", { cause })),
+          )
+        }
       })
 
       const isFilePart = (value: unknown): value is SessionV1.FilePart => Schema.is(SessionV1.FilePart)(value)
@@ -547,6 +620,10 @@ export const layer = Layer.effect(
       })
 
       const cleanup = Effect.fn("SessionProcessor.cleanup")(function* () {
+        if (ctx.heartbeat) {
+          yield* Fiber.interrupt(ctx.heartbeat)
+          ctx.heartbeat = undefined
+        }
         if (ctx.snapshot) {
           const patch = yield* snapshot.patch(ctx.snapshot)
           if (patch.files.length) {
@@ -602,6 +679,7 @@ export const layer = Layer.effect(
           })
         }
         ctx.toolcalls = {}
+        ToolProgress.clearSession(ctx.sessionID)
         ctx.assistantMessage.time.completed = Date.now()
         yield* session.updateMessage(ctx.assistantMessage)
       })
@@ -646,6 +724,7 @@ export const layer = Layer.effect(
 
         return yield* Effect.gen(function* () {
           yield* status.set(ctx.sessionID, { type: "busy" })
+          ctx.heartbeat = yield* Effect.forkIn(scope)(toolProgressLoop())
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
