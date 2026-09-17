@@ -226,7 +226,7 @@ L3 的契约要点（Claude Code 已验证，可直接借用为验收标准）�
 已经按本节落地，全部在 `packages/opencode/src`（未动 V2）：
 
 - `src/tool/job.ts` 新增 `job_output` / `job_kill`：增量读取 job 的输出（只给新字节，或 `(no new output)`，末尾附 `[status: …]`），以及取消。跨 session 的 job 拒绝读取/终止；未知 id 会列出正在运行的 job。
-- `bash` 增加有界等待 `yieldMs`（默认 10000ms，`OPENCODE_BASH_YIELD_MS` 覆盖，`0` 表示几乎立即转后台）：窗口内结束就照旧返回结果；仍在运行则登记为 `BackgroundJob` 并返回句柄（jobId + 输出文件 + 已捕获输出 + 通知约定）。
+- `bash` 增加有界等待 `yieldMs`（默认 15000ms，`OPENCODE_BASH_YIELD_MS` 覆盖，`0` 表示几乎立即转后台）：窗口内结束就照旧返回结果；仍在运行则登记为 `BackgroundJob` 并返回句柄（jobId + 输出文件 + 已捕获输出 + 通知约定）。
 - 命令在**工具层的 scope** 里继续跑，因此能活过这次调用；取消 job 会中断该 fiber → 关闭 spawn scope → 杀掉进程。完成时向会话注入一条 synthetic 的 `[amio:background]` 消息（复用 `task` 的通知路径）。
 - 已知缺口：转后台的命令**不报 `outputs` artifacts**（artifact 仍要求命令在窗口内结束且退出码为 0）；job 是进程内的，agent 重启即消失（与 Codex 的 exec session 同级）。
 - 实测修掉的一个坑：转后台的命令原先**继承本轮的 abort 信号**，于是回合结束就被当成「用户中止」杀掉（exit code null）。现在转后台后忽略请求信号，只有 `job_kill`（或命令自己的 timeout）能停它 —— 与 Codex / Claude Code 对后台任务的处理一致。

@@ -390,7 +390,7 @@ export const ShellTool = Tool.define(
     const background = yield* BackgroundJob.Service
     const scope = yield* Scope.Scope
     const defaultTimeoutMs = flags.bashDefaultTimeoutMs ?? 2 * 60 * 1000
-    const defaultYieldMs = flags.bashYieldMs ?? 10_000
+    const defaultYieldMs = flags.bashYieldMs ?? 15_000
 
     const cygpath = Effect.fn("ShellTool.cygpath")(function* (shell: string, text: string) {
       const lines = yield* spawner
