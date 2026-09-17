@@ -221,6 +221,20 @@ L3 的契约要点（Claude Code 已验证，可直接借用为验收标准）�
 
 所以 L3 作为独立阶段，与上游计划对齐后再做；P1 是它落地前就能交付「不能干等」的过渡形态。若 P1 与 L3 同时可用，**默认应走 L3（后台化），只有工具明确不可后台化时才走 P1 的终止语义**。
 
+#### 4.3.1 已实现（V1，2026-09-17）
+
+已经按本节落地，全部在 `packages/opencode/src`（未动 V2）：
+
+- `src/tool/job.ts` 新增 `job_output` / `job_kill`：增量读取 job 的输出（只给新字节，或 `(no new output)`，末尾附 `[status: …]`），以及取消。跨 session 的 job 拒绝读取/终止；未知 id 会列出正在运行的 job。
+- `bash` 增加有界等待 `yieldMs`（默认 10000ms，`OPENCODE_BASH_YIELD_MS` 覆盖，`0` 表示几乎立即转后台）：窗口内结束就照旧返回结果；仍在运行则登记为 `BackgroundJob` 并返回句柄（jobId + 输出文件 + 已捕获输出 + 通知约定）。
+- 命令在**工具层的 scope** 里继续跑，因此能活过这次调用；取消 job 会中断该 fiber → 关闭 spawn scope → 杀掉进程。完成时向会话注入一条 synthetic 的 `[amio:background]` 消息（复用 `task` 的通知路径）。
+- 已知缺口：转后台的命令**不报 `outputs` artifacts**（artifact 仍要求命令在窗口内结束且退出码为 0）；job 是进程内的，agent 重启即消失（与 Codex 的 exec session 同级）。
+- 实测修掉的一个坑：转后台的命令原先**继承本轮的 abort 信号**，于是回合结束就被当成「用户中止」杀掉（exit code null）。现在转后台后忽略请求信号，只有 `job_kill`（或命令自己的 timeout）能停它 —— 与 Codex / Claude Code 对后台任务的处理一致。
+- 与 Codex 的手感对齐：Codex 那边「还在跑 / 看着不对，杀掉重跑」并不是看门狗，而是**模型自己用 `write_stdin` 空轮询（5s–300s）**分次等待后自己判断。我们现在提供同样的能力：`job_output` 支持 `wait_ms`（有界等待，上限 300s），提示词**只陈述能力**（增量读、可等待、可 `job_kill`、完成会自动通知），要不要等、要不要杀由模型自己判断。注意 V1 默认 `steps` 为无限（`prompt.ts:1219`），轮询次数没有硬上限。
+- 总时长语义对齐 Codex：`timeout` 只约束**前台等待**，命令转后台后不再被它杀掉，只能由 `job_kill` 停（`shell.ts` 的 race 在 detach 后走 `Effect.never`）。作为替代保险，后台任务的 spool 文件在 1 GiB 处停止增长并写入截断标记。
+- 已等时长回传（对齐 Codex 的 `wall_time_seconds`）：`job_output` / `job_kill` / `bash` 的转后台句柄都输出 `[status: …] [wall time: 2m30s]`，metadata 里带 `wallTimeMs`，完成通知写「after 1m3s」。
+- job 回收：注册表在每次 `start` 时丢弃超过 64 个的终态 job，并暴露 `prune({ keep })` 供显式调用，避免长会话把已结束 job 的输出一直留在内存里。这一条动了共享注册表 `packages/core/src/background-job.ts`（V1 wrapper 与 `task` 后台模式本来就在用它），未触及任何 V2 的 session/tool 代码。
+
 ### 4.4 可选：静默事实的 next-turn 记录（P2.5）
 
 如果希望「工具最终完成、但中途静默很久」这件事也留痕给模型，可以加一个 `SystemContext` source（`packages/core/src/system-context/index.ts:32-39` 的 `Source` 已支持 `baseline`/`update`/`removed`），key 如 `amio/tool-silence`，值为最近静默过的 call 列表（带 TTL 与 `removed` 渲染）。注意它只在下一个 provider turn 生效，**不能**替代 L2。

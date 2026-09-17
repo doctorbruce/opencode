@@ -8,6 +8,7 @@ export {
   type ExtendInput,
   type Info,
   type Interface,
+  type PruneInput,
   type StartInput,
   type Status,
   type WaitInput,
@@ -28,6 +29,7 @@ export const layer = Layer.effect(
       waitForPromotion: (id) => InstanceState.useEffect(state, (jobs) => jobs.waitForPromotion(id)),
       promote: (id) => InstanceState.useEffect(state, (jobs) => jobs.promote(id)),
       cancel: (id) => InstanceState.useEffect(state, (jobs) => jobs.cancel(id)),
+      prune: (input) => InstanceState.useEffect(state, (jobs) => jobs.prune(input)),
     })
   }),
 )

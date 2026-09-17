@@ -269,6 +269,14 @@ export const outputTail = (value: unknown) => {
   return ""
 }
 
+/** Compact elapsed/wall time, e.g. `45s`, `2m30s`. */
+export const formatWallTime = (ms: number) => {
+  if (ms < 60_000) return `${Math.max(0, Math.round(ms / 1_000))}s`
+  const seconds = Math.round((ms % 60_000) / 1_000)
+  const minutes = Math.floor(ms / 60_000)
+  return seconds > 0 ? `${minutes}m${seconds}s` : `${minutes}m`
+}
+
 const quietMsFor = (tool: string) => {
   if (LONG_TOOLS.has(tool)) return QUIET_MS_LONG
   if (SHORT_TOOLS.has(tool)) return QUIET_MS_SHORT

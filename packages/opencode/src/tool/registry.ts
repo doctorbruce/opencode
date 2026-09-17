@@ -15,6 +15,7 @@ import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
+import { JobKillTool, JobOutputTool } from "./job"
 import { SkillTool } from "./skill"
 import { ToolSearchTool } from "./tool-search"
 import { SkillSearchTool } from "./skill-search"
@@ -94,6 +95,8 @@ export const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
 
     const invalid = yield* InvalidTool
+    const jobOutput = yield* JobOutputTool
+    const jobKill = yield* JobKillTool
     const task = yield* TaskTool
     const read = yield* ReadTool
     const question = yield* QuestionTool
@@ -203,6 +206,8 @@ export const layer = Layer.effect(
 
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
+          jobOutput: Tool.init(jobOutput),
+          jobKill: Tool.init(jobKill),
           shell: Tool.init(shell),
           read: Tool.init(read),
           glob: Tool.init(globtool),
@@ -226,6 +231,8 @@ export const layer = Layer.effect(
           custom,
           builtin: [
             tool.invalid,
+            tool.jobOutput,
+            tool.jobKill,
             ...(questionEnabled ? [tool.question] : []),
             tool.shell,
             tool.read,

@@ -20,6 +20,8 @@ import { Plugin } from "../../src/plugin"
 import { testEffect } from "../lib/effect"
 import { Tool } from "@/tool/tool"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { BackgroundJob } from "../../src/background/job"
+import { JobOutputTool } from "../../src/tool/job"
 import { InstanceStore } from "@/project/instance-store"
 
 const shellLayer = Layer.mergeAll(
@@ -30,6 +32,7 @@ const shellLayer = Layer.mergeAll(
   Config.defaultLayer,
   Agent.defaultLayer,
   RuntimeFlags.defaultLayer,
+  BackgroundJob.defaultLayer,
   testInstanceStoreLayer,
 )
 const it = testEffect(shellLayer)
@@ -331,7 +334,7 @@ describe("tool.shell", () => {
 
 describe("tool.shell prompt", () => {
   test("renders Windows PowerShell 5.1 guidance without bash tool wording", () => {
-    const prompt = render("powershell", "win32", promptLimits, 30_000).description
+    const prompt = render("powershell", "win32", promptLimits, 30_000, 0).description
 
     expect(prompt).toContain("Windows PowerShell (5.1)")
     expect(prompt).toContain("Pipeline chain operators `&&` and `||` are NOT available")
@@ -345,7 +348,7 @@ describe("tool.shell prompt", () => {
   })
 
   test("renders PowerShell 7 guidance without bash tool wording", () => {
-    const prompt = render("pwsh", "win32", promptLimits, 30_000).description
+    const prompt = render("pwsh", "win32", promptLimits, 30_000, 0).description
 
     expect(prompt).toContain("PowerShell (7+)")
     expect(prompt).toContain("Pipeline chain operators `&&` and `||` are available")
@@ -354,7 +357,7 @@ describe("tool.shell prompt", () => {
   })
 
   test("renders cmd guidance without bash tool wording", () => {
-    const prompt = render("cmd", "win32", promptLimits, 30_000).description
+    const prompt = render("cmd", "win32", promptLimits, 30_000, 0).description
 
     expect(prompt).toContain("cmd.exe")
     expect(prompt).not.toContain("bash tool call")
@@ -1342,5 +1345,104 @@ describe("tool.shell truncation", () => {
         expect(lines[lineCount - 1]).toBe(String(lineCount))
       }),
     ),
+  )
+})
+
+describe("tool.shell background", () => {
+  it.live(
+    "moves a still-running command to a background job",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const background = yield* BackgroundJob.Service
+          const result = yield* run({ command: "sleep 30", yieldMs: 500 })
+
+          expect(result.metadata.background).toBe(true)
+          const jobID = result.metadata.jobId as string
+          expect(typeof jobID).toBe("string")
+          expect(typeof result.metadata.wallTimeMs).toBe("number")
+          expect(result.output).toContain("still running")
+          expect(result.output).toContain(jobID)
+          expect(result.output).toMatch(/\[wall time: \d+s\]/)
+
+          const info = yield* background.get(jobID)
+          expect(info?.status).toBe("running")
+          expect(info?.metadata?.outputPath).toBe(result.metadata.outputPath)
+
+          yield* background.cancel(jobID)
+          const cancelled = yield* background.get(jobID)
+          expect(cancelled?.status).toBe("cancelled")
+        }),
+      ),
+    20_000,
+  )
+
+  it.live(
+    "keeps running after the turn's abort signal fires",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const background = yield* BackgroundJob.Service
+          const controller = new AbortController()
+          const result = yield* run({ command: "sleep 30", yieldMs: 500 }, { ...ctx, abort: controller.signal })
+          const jobID = result.metadata.jobId as string
+
+          controller.abort()
+
+          const info = yield* background.get(jobID)
+          expect(info?.status).toBe("running")
+
+          yield* background.cancel(jobID)
+          const cancelled = yield* background.get(jobID)
+          expect(cancelled?.status).toBe("cancelled")
+        }),
+      ),
+    20_000,
+  )
+
+  it.live(
+    "does not apply the call timeout to a detached command",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const background = yield* BackgroundJob.Service
+          const result = yield* run({ command: "sleep 30", yieldMs: 200, timeout: 300 })
+          const jobID = result.metadata.jobId as string
+
+          // The call timeout would have fired by now; the detached command must
+          // keep running until something stops it explicitly.
+          yield* Effect.sleep("1 second")
+          const info = yield* background.get(jobID)
+          expect(info?.status).toBe("running")
+
+          yield* background.cancel(jobID)
+        }),
+      ),
+    20_000,
+  )
+
+  it.live(
+    "job_output reads what the detached command already wrote",
+    () =>
+      runIn(
+        projectRoot,
+        Effect.gen(function* () {
+          const background = yield* BackgroundJob.Service
+          const tool = yield* (yield* JobOutputTool).init()
+          const result = yield* run({ command: "echo first && sleep 30", yieldMs: 2_000 })
+          const jobID = result.metadata.jobId as string
+          expect(result.output).toContain("first")
+
+          const read = yield* tool.execute({ job_id: jobID }, ctx)
+          expect(read.output).toContain("first")
+          expect(read.output).toContain("[status: running]")
+
+          yield* background.cancel(jobID)
+        }),
+      ),
+    20_000,
   )
 })

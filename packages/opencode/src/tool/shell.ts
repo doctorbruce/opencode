@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, Exit, Cause, Deferred, Fiber, Option, Scope, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -24,6 +24,8 @@ import { BashArity } from "@/permission/arity"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Artifact } from "./artifact"
 import { ToolProgress } from "@/session/tool-progress"
+import { BackgroundJob } from "@/background/job"
+import type { TaskPromptOps } from "./task"
 
 export { Parameters } from "./shell/prompt"
 
@@ -349,6 +351,33 @@ const parser = lazy(async () => {
   return { bash, ps }
 })
 
+/** Cap for a detached command's spooled output file; the process keeps running. */
+const SPOOL_LIMIT_BYTES = 1024 * 1024 * 1024
+
+/** Shared state between the foreground call and a command that outlives it. */
+type ShellProgress = {
+  preview: string
+  detached: boolean
+  spool?: { stream: ReturnType<typeof createWriteStream>; written: number; truncated: boolean }
+}
+
+type ShellRunResult = {
+  title: string
+  metadata: { output: string; exit: number | null; truncated: boolean; outputPath?: string }
+  output: string
+}
+
+type ShellMetadata = {
+  output: string
+  exit: number | null
+  truncated: boolean
+  outputPath?: string
+  outputs: Artifact.Output[]
+  background?: boolean
+  jobId?: string
+  wallTimeMs?: number
+}
+
 export const ShellTool = Tool.define(
   ShellID.ToolID,
   Effect.gen(function* () {
@@ -358,7 +387,10 @@ export const ShellTool = Tool.define(
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
     const flags = yield* RuntimeFlags.Service
+    const background = yield* BackgroundJob.Service
+    const scope = yield* Scope.Scope
     const defaultTimeoutMs = flags.bashDefaultTimeoutMs ?? 2 * 60 * 1000
+    const defaultYieldMs = flags.bashYieldMs ?? 10_000
 
     const cygpath = Effect.fn("ShellTool.cygpath")(function* (shell: string, text: string) {
       const lines = yield* spawner
@@ -448,6 +480,7 @@ export const ShellTool = Tool.define(
         timeout: number
       },
       ctx: Tool.Context,
+      progress: ShellProgress,
     ) {
       const limits = yield* trunc.limits()
       const keep = limits.maxBytes * 2
@@ -510,6 +543,24 @@ export const ShellTool = Tool.define(
               }
 
               last = preview(last + chunk)
+              progress.preview = last
+
+              // A command that outlives its tool call keeps writing here so the
+              // job stays readable while it runs. The detach path seeds the file
+              // with everything captured up to that point. The cap keeps a
+              // runaway producer from filling the disk now that a detached
+              // command is no longer bounded by the call timeout.
+              if (progress.spool) {
+                if (progress.spool.written < SPOOL_LIMIT_BYTES) {
+                  progress.spool.stream.write(chunk)
+                  progress.spool.written += size
+                } else if (!progress.spool.truncated) {
+                  progress.spool.truncated = true
+                  progress.spool.stream.write(
+                    `\n[output spool truncated at ${SPOOL_LIMIT_BYTES} bytes; the command keeps running]\n`,
+                  )
+                }
+              }
 
               if (file) {
                 sink?.write(chunk)
@@ -545,13 +596,28 @@ export const ShellTool = Tool.define(
           )
 
           const abort = Effect.callback<void>((resume) => {
-            if (ctx.abort.aborted) return resume(Effect.void)
-            const handler = () => resume(Effect.void)
+            // A detached command outlives its turn: the request signal aborts
+            // when the turn ends, and following it would kill the job that the
+            // model was told is still running. Job cancellation is what stops a
+            // detached command.
+            const handler = () => {
+              if (progress.detached) return
+              resume(Effect.void)
+            }
+            if (ctx.abort.aborted) {
+              handler()
+              return
+            }
             ctx.abort.addEventListener("abort", handler, { once: true })
             return Effect.sync(() => ctx.abort.removeEventListener("abort", handler))
           })
 
-          const timeout = Effect.sleep(`${input.timeout + 100} millis`)
+          // The call timeout only bounds waiting on the command. Once it moves
+          // to the background it stops applying: the model stops that job with
+          // `job_kill` instead.
+          const timeout = Effect.sleep(`${input.timeout + 100} millis`).pipe(
+            Effect.flatMap(() => (progress.detached ? Effect.never : Effect.void)),
+          )
 
           const exit = yield* Effect.raceAll([
             handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
@@ -620,13 +686,117 @@ export const ShellTool = Tool.define(
       }
     })
 
+    // Both the foreground and the detached branch return this shape; annotating
+    // it keeps the tool's metadata type from collapsing to one branch.
+    const toolResult = (input: {
+      title: string
+      metadata: ShellMetadata
+      output: string
+    }): Tool.ExecuteResult<ShellMetadata> => input
+
+    // Moves an unfinished command to a background job and hands the model a
+    // handle instead of a result. The command keeps running in the tool scope.
+    const detach = Effect.fn("ShellTool.detach")(function* (
+      params: Parameters,
+      ctx: Tool.Context,
+      progress: ShellProgress,
+      done: Deferred.Deferred<Exit.Exit<ShellRunResult, unknown>>,
+      fiber: Fiber.Fiber<ShellRunResult, unknown>,
+      cwd: string,
+    ) {
+      // Ignore the turn's abort from here on: the command is no longer this
+      // call's work, and job cancellation is what stops it.
+      progress.detached = true
+
+      // Seed through the truncation writer so the initial output is durable
+      // before the first job_output read; the stream only appends later chunks.
+      const outputPath = yield* trunc.write(progress.preview)
+      const stream = createWriteStream(outputPath, { flags: "a" })
+      progress.spool = { stream, written: Buffer.byteLength(progress.preview, "utf-8"), truncated: false }
+
+      const info = yield* background.start({
+        type: "bash",
+        title: params.command,
+        metadata: {
+          parentSessionId: ctx.sessionID,
+          background: true,
+          outputPath,
+          command: params.command,
+          workdir: cwd,
+        },
+        run: Deferred.await(done).pipe(
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit) ? Effect.succeed(exit.value.output) : Effect.failCause(exit.cause),
+          ),
+          Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+        ),
+      })
+
+      yield* notifyBackgroundResult(ctx, done, info, outputPath)
+
+      return toolResult({
+        title: params.command,
+        metadata: {
+          output: progress.preview,
+          exit: null,
+          truncated: false,
+          background: true,
+          jobId: info.id,
+          outputPath,
+          wallTimeMs: Math.max(0, Date.now() - info.started_at),
+          outputs: [] as Artifact.Output[],
+        },
+        output: [
+          progress.preview || "(no output yet)",
+          "",
+          `Background job ${info.id}: the command is still running ([wall time: ${ToolProgress.formatWallTime(
+            Date.now() - info.started_at,
+          )}]). Output is written to: ${outputPath}`,
+          "`job_output` reads it (or waits with `wait_ms`), `job_kill` stops it, and you are notified when it finishes.",
+        ].join("\n"),
+      })
+    })
+
+    const notifyBackgroundResult = Effect.fnUntraced(function* (
+      ctx: Tool.Context,
+      done: Deferred.Deferred<Exit.Exit<ShellRunResult, unknown>>,
+      info: BackgroundJob.Info,
+      outputPath: string,
+    ) {
+      const ops = ctx.extra?.promptOps as TaskPromptOps | undefined
+      if (!ops) return
+      yield* Deferred.await(done).pipe(
+        Effect.flatMap((exit) => {
+          const wall = ToolProgress.formatWallTime(Math.max(0, Date.now() - info.started_at))
+          const summary = Exit.isSuccess(exit)
+            ? [
+                `Background job ${info.id} finished with exit code ${exit.value.metadata.exit ?? "null"} after ${wall}.`,
+                "",
+                ToolProgress.tail(exit.value.output),
+                "",
+                `Full output: ${outputPath}`,
+              ].join("\n")
+            : Cause.hasInterruptsOnly(exit.cause)
+              ? `Background job ${info.id} was cancelled after ${wall}.`
+              : `Background job ${info.id} failed after ${wall}: ${String(Cause.squash(exit.cause))}`
+          return ops.prompt({
+            sessionID: ctx.sessionID,
+            agent: ctx.agent,
+            parts: [{ type: "text", synthetic: true, text: `[amio:background]\n${summary}` }],
+          })
+        }),
+        Effect.ignore,
+        Effect.forkIn(scope, { startImmediately: true }),
+      )
+    })
+
     return () =>
       Effect.gen(function* () {
         const cfg = yield* config.get()
         const shell = Shell.acceptable(cfg.shell)
         const name = Shell.name(shell)
         const limits = yield* trunc.limits()
-        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
+        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs, defaultYieldMs)
         yield* Effect.logInfo("shell tool using shell", { shell })
 
         return {
@@ -661,7 +831,13 @@ export const ShellTool = Tool.define(
                 }),
               )
 
-              const result = yield* run(
+              const yieldMs = params.yieldMs ?? defaultYieldMs
+              const progress: ShellProgress = { preview: "", detached: false }
+              const done = yield* Deferred.make<Exit.Exit<ShellRunResult, unknown>>()
+              // The command runs in the tool layer's scope so a detached command
+              // outlives this call; job cancellation interrupts this fiber, which
+              // closes the spawn scope and kills the process.
+              const fiber = yield* run(
                 {
                   shell,
                   command: params.command,
@@ -670,7 +846,20 @@ export const ShellTool = Tool.define(
                   timeout,
                 },
                 ctx,
+                progress,
+              ).pipe(
+                Effect.onExit((exit) => Deferred.succeed(done, exit).pipe(Effect.asVoid)),
+                Effect.forkIn(scope, { startImmediately: true }),
               )
+
+              const settled = yield* Deferred.await(done).pipe(Effect.timeoutOption(`${Math.max(1, yieldMs)} millis`))
+              if (Option.isNone(settled)) return yield* detach(params, ctx, progress, done, fiber, cwd)
+
+              const exit = settled.value
+              // The caller's tool wrapper already turns failures into defects, so
+              // keep this effect's error channel empty.
+              if (Exit.isFailure(exit)) return yield* Effect.die(Cause.squash(exit.cause))
+              const result = exit.value
               const outputs: Artifact.Output[] = []
               const warnings: string[] = []
               if (result.metadata.exit === 0 && !ctx.abort.aborted) {
@@ -690,13 +879,13 @@ export const ShellTool = Tool.define(
                     outputs.push({ path: canonical.value, artifactRole: item.artifactRole })
                 }
               }
-              return {
+              return toolResult({
                 ...result,
                 metadata: { ...result.metadata, outputs },
                 output: warnings.length
                   ? `${result.output}\n\nArtifact warnings:\n${warnings.join("\n")}`
                   : result.output,
-              }
+              })
             }),
         }
       })

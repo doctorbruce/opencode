@@ -13,10 +13,16 @@ export type Limits = {
   maxBytes: number
 }
 
-export function parameterSchema() {
+export function parameterSchema(defaultYieldMs: number) {
   return Schema.Struct({
     command: Schema.String.annotate({ description: "The command to execute" }),
-    timeout: Schema.optional(PositiveInt).annotate({ description: "Optional timeout in milliseconds" }),
+    timeout: Schema.optional(PositiveInt).annotate({
+      description:
+        "Optional timeout in milliseconds for waiting on the command. It does not apply once the command has moved to the background; stop a background job with `job_kill` instead.",
+    }),
+    yieldMs: Schema.optional(Schema.Number).annotate({
+      description: `How long to wait for the command before moving it to the background, in milliseconds. Defaults to ${defaultYieldMs}; 0 moves it to the background immediately.`,
+    }),
     workdir: Schema.optional(Schema.String).annotate({
       description: `The working directory to run the command in. Defaults to the current directory. Use this instead of 'cd' commands.`,
     }),
@@ -27,7 +33,7 @@ export function parameterSchema() {
   })
 }
 
-export const Parameters = parameterSchema()
+export const Parameters = parameterSchema(0)
 export type Parameters = Schema.Schema.Type<typeof Parameters>
 
 function renderPrompt(template: string, values: Record<string, string>) {
@@ -285,7 +291,18 @@ function profile(name: string, platform: NodeJS.Platform, limits: Limits, defaul
   }
 }
 
-export function render(name: string, platform: NodeJS.Platform, limits: Limits, defaultTimeoutMs: number) {
+function backgroundNote(yieldMs: number) {
+  if (yieldMs <= 0) return ""
+  return `\n\n  - If the command is still running after ${yieldMs}ms it is moved to the background and you get a job id instead of a result. Its output is written to a file: \`job_output\` reads new output or waits with \`wait_ms\`, \`job_kill\` stops it, and you are notified when it finishes.`
+}
+
+export function render(
+  name: string,
+  platform: NodeJS.Platform,
+  limits: Limits,
+  defaultTimeoutMs: number,
+  defaultYieldMs: number,
+) {
   const selected = profile(name, platform, limits, defaultTimeoutMs)
   return {
     description: renderPrompt(DESCRIPTION, {
@@ -294,14 +311,14 @@ export function render(name: string, platform: NodeJS.Platform, limits: Limits, 
       shell: name,
       tmp: Global.Path.tmp,
       workdirSection: selected.workdirSection,
-      commandSection: selected.commandSection,
+      commandSection: selected.commandSection + backgroundNote(defaultYieldMs),
       gitCommands: selected.gitCommands,
       toolName: ShellID.ToolID,
       gitCommandRestriction: selected.gitCommandRestriction,
       createPrInstruction: selected.createPrInstruction,
       createPrExample: selected.createPrExample,
     }),
-    parameters: parameterSchema(),
+    parameters: parameterSchema(defaultYieldMs),
   }
 }
 

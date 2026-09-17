@@ -6,6 +6,9 @@ import { makeGlobalNode } from "./effect/app-node"
 
 export type Status = "running" | "completed" | "error" | "cancelled"
 
+/** Settled jobs kept in memory; older ones are dropped so long sessions cannot accumulate them. */
+const MAX_SETTLED_JOBS = 64
+
 export type Info = {
   id: string
   type: string
@@ -85,6 +88,11 @@ export type WaitResult = {
   timedOut: boolean
 }
 
+export type PruneInput = {
+  /** How many settled jobs to keep. Older settled jobs are dropped first. */
+  keep?: number
+}
+
 export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly get: (id: string) => Effect.Effect<Info | undefined>
@@ -94,6 +102,8 @@ export interface Interface {
   readonly waitForPromotion: (id: string) => Effect.Effect<Info>
   readonly promote: (id: string) => Effect.Effect<Info | undefined>
   readonly cancel: (id: string) => Effect.Effect<Info | undefined>
+  /** Drops settled jobs beyond `keep`, oldest first. Running jobs are never dropped. */
+  readonly prune: (input?: PruneInput) => Effect.Effect<string[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/BackgroundJob") {}
@@ -248,6 +258,7 @@ export const make = Effect.gen(function* () {
             0,
             restore(input.run).pipe(Effect.ensuring(Deferred.succeed(tail, undefined))),
           )
+        if ("scope" in result) yield* prune()
         return result.info
       }),
     )
@@ -357,7 +368,21 @@ export const make = Effect.gen(function* () {
     return result.info
   })
 
-  return Service.of({ list, get, start, extend, wait, waitForPromotion, promote, cancel })
+  const prune: Interface["prune"] = Effect.fn("BackgroundJob.prune")(function* (input) {
+    const keep = Math.max(0, input?.keep ?? MAX_SETTLED_JOBS)
+    return yield* SynchronizedRef.modify(state.jobs, (jobs): readonly [string[], Map<string, Active>] => {
+      const settled = Array.from(jobs.values())
+        .filter((job) => job.info.status !== "running")
+        .toSorted((a, b) => a.info.started_at - b.info.started_at)
+      const dropped = settled.slice(0, Math.max(0, settled.length - keep)).map((job) => job.info.id)
+      if (dropped.length === 0) return [[], jobs] as const
+      const next = new Map(jobs)
+      for (const id of dropped) next.delete(id)
+      return [dropped, next] as const
+    })
+  })
+
+  return Service.of({ list, get, start, extend, wait, waitForPromotion, promote, cancel, prune })
 })
 
 export const layer = Layer.effect(Service, make)
