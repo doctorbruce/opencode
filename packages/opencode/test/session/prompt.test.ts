@@ -976,19 +976,20 @@ it.instance("loop surfaces content-filter finishes as session errors", () =>
   }),
 )
 
-it.instance("loop surfaces length finishes as output length errors", () =>
+it.instance("prompt completes at the output limit and preserves partial text", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)
     const prompt = yield* SessionPrompt.Service
     const sessions = yield* Session.Service
+    const events = yield* EventV2Bridge.Service
     const chat = yield* sessions.create({ title: "Pinned" })
-
-    yield* prompt.prompt({
-      sessionID: chat.id,
-      agent: "build",
-      noReply: true,
-      parts: [{ type: "text", text: "hello" }],
+    const seen: { type: string; data: unknown }[] = []
+    const off = yield* events.listen((event) => {
+      seen.push({ type: event.type, data: event.data })
+      return Effect.void
     })
+    yield* Effect.addFinalizer(() => off)
+
     yield* llm.push(
       raw({
         chunks: [
@@ -1000,21 +1001,50 @@ it.instance("loop surfaces length finishes as output length errors", () =>
           {
             id: "chatcmpl-test",
             object: "chat.completion.chunk",
+            choices: [{ delta: { content: "partial response" } }],
+          },
+          {
+            id: "chatcmpl-test",
+            object: "chat.completion.chunk",
             choices: [{ delta: {}, finish_reason: "length" }],
           },
         ],
       }),
     )
 
-    const result = yield* prompt.loop({ sessionID: chat.id })
+    const result = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      requestID: "req-output-limit",
+      parts: [{ type: "text", text: "hello" }],
+    })
 
     expect(yield* llm.hits).toHaveLength(1)
     expect(result.info.role).toBe("assistant")
     if (result.info.role === "assistant") {
       expect(result.info.finish).toBe("length")
-      expect(result.info.error).toEqual({ name: "MessageOutputLengthError", data: {} })
+      expect(result.info.error).toBeUndefined()
     }
-    expect(result.parts.some((part) => part.type === "text")).toBe(false)
+    expect(result.parts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "text", text: "partial response" })]),
+    )
+    expect(seen.some((event) => event.type === "session.error" || event.type === "prompt.failed")).toBe(false)
+    expect(seen.find((event) => event.type === "prompt.completed")?.data).toMatchObject({
+      sessionID: chat.id,
+      requestID: "req-output-limit",
+      stopReason: "max_tokens",
+      finishReason: "length",
+    })
+
+    yield* llm.text("continued response")
+    const continued = yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      parts: [{ type: "text", text: "continue" }],
+    })
+    expect(continued.parts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "text", text: "continued response" })]),
+    )
   }),
 )
 

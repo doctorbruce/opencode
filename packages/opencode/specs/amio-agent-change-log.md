@@ -2,6 +2,15 @@
 
 This document records local fork changes made for Astron Cowork's opencode sidecar. Keep future fork-specific changes here so they can be reviewed without diffing the full upstream project.
 
+## 2026-09-18
+
+### Keep sessions usable when model output reaches its token limit
+
+- Treat provider `finish=length` as an incomplete but valid completion instead of persisting `MessageOutputLengthError` and publishing `session.error` / `prompt.failed`.
+- Preserve partial text and usage, publish `prompt.completed` with `stopReason=max_tokens` and `finishReason=length`, and keep the same Session available for the next prompt.
+- Use the model's declared output limit by default instead of imposing the fork's 32,000-token cap. `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` remains available when an operator explicitly wants a lower ceiling.
+- Preserve genuine provider errors even if the provider also reports `finish=length`; only an otherwise successful length finish uses the recoverable completion path.
+
 ## 2026-09-17
 
 ### Write the runtime layout under `amio` instead of `opencode`

@@ -695,7 +695,7 @@ type MessageInfo = {
 }
 
 type AssistantError = NonNullable<AssistantMessage["error"]>
-type AssistantInfo = (UsageService.AssistantTokenCost & Pick<AssistantMessage, "error">) | undefined
+type AssistantInfo = (UsageService.AssistantTokenCost & Pick<AssistantMessage, "error" | "finish">) | undefined
 
 function request<T>(fn: () => Promise<T | SdkResponse<T>>, service?: string) {
   return Effect.tryPromise({
@@ -815,6 +815,14 @@ const promptResponse = Effect.fn("ACP.promptResponse")(function* (
   info: AssistantInfo,
   messageId: string | null | undefined,
 ) {
+  if (info?.finish === "length" && !info.error) {
+    return {
+      stopReason: "max_tokens" as const,
+      usage: UsageService.buildUsage(info),
+      ...(messageId ? { userMessageId: messageId } : {}),
+      _meta: {},
+    }
+  }
   if (!info?.error) {
     return {
       stopReason: "end_turn" as const,

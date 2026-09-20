@@ -6,6 +6,23 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { jsonSchema } from "ai"
 
+describe("ProviderTransform.maxOutputTokens", () => {
+  const model = (output: number) => ({ limit: { output } }) as any
+
+  test("uses the model output limit when no runtime cap is configured", () => {
+    expect(ProviderTransform.maxOutputTokens(model(131_072))).toBe(131_072)
+  })
+
+  test("honors an explicit runtime cap without exceeding the model limit", () => {
+    expect(ProviderTransform.maxOutputTokens(model(131_072), 24_000)).toBe(24_000)
+    expect(ProviderTransform.maxOutputTokens(model(16_000), 24_000)).toBe(16_000)
+  })
+
+  test("falls back for models without a declared output limit", () => {
+    expect(ProviderTransform.maxOutputTokens(model(0))).toBe(ProviderTransform.OUTPUT_TOKEN_MAX)
+  })
+})
+
 describe("ProviderTransform.options - setCacheKey", () => {
   const sessionID = "test-session-123"
 

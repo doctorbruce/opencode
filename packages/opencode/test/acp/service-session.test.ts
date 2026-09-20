@@ -1018,7 +1018,36 @@ describe("ACP service sessions", () => {
     expect(usageUpdates).toEqual([session.sessionId])
   })
 
-  it("maps assistant prompt errors to request errors instead of end turn", async () => {
+  it("maps output length finishes to max tokens without failing the prompt", async () => {
+    const { service } = makeService([], {
+      prompt: () =>
+        Promise.resolve({
+          data: {
+            info: assistantInfo(
+              { input: 8, output: 5, reasoning: 3, cache: { read: 2, write: 0 } },
+              undefined,
+              "length",
+            ),
+          },
+        }),
+    })
+    const session = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
+
+    const result = await Effect.runPromise(
+      service.prompt({ sessionId: session.sessionId, prompt: [{ type: "text", text: "hello" }] }),
+    )
+
+    expect(result.stopReason).toBe("max_tokens")
+    expect(result.usage).toEqual({
+      inputTokens: 8,
+      outputTokens: 5,
+      thoughtTokens: 3,
+      cachedReadTokens: 2,
+      totalTokens: 18,
+    })
+  })
+
+  it("keeps assistant prompt errors terminal even when the provider also reports length", async () => {
     const { service } = makeService([], {
       prompt: () =>
         Promise.resolve({
@@ -1026,6 +1055,7 @@ describe("ACP service sessions", () => {
             info: assistantInfo(
               { input: 8, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
               { name: "APIError", data: { message: "Provider request failed", isRetryable: false } },
+              "length",
             ),
           },
         }),
@@ -1218,7 +1248,8 @@ describe("ACP service sessions", () => {
 function assistantInfo(
   tokens: UsageService.AssistantTokenCost["tokens"],
   error?: AssistantMessage["error"],
-): UsageService.AssistantMessage & Pick<AssistantMessage, "error"> {
+  finish?: AssistantMessage["finish"],
+): UsageService.AssistantMessage & Pick<AssistantMessage, "error" | "finish"> {
   return {
     role: "assistant",
     providerID: "test",
@@ -1226,6 +1257,7 @@ function assistantInfo(
     cost: 0,
     tokens,
     ...(error ? { error } : {}),
+    ...(finish ? { finish } : {}),
   }
 }
 
