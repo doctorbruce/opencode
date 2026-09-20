@@ -6,6 +6,7 @@ import { InstanceRef } from "@/effect/instance-ref"
 import { Provider } from "@/provider/provider"
 import type { InstanceContext } from "@/project/instance-context"
 import { Skill } from "@/skill"
+import { MCP } from "@/mcp"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { Effect, Exit, Fiber, Latch, Layer, Scope } from "effect"
@@ -27,7 +28,7 @@ function instance(directory: string): InstanceContext {
   }
 }
 
-function runtimeLayer(reload: Config.Interface["reload"]) {
+function runtimeLayer(reload: Config.Interface["reload"], invalidate: () => Effect.Effect<void> = () => Effect.void) {
   return ConfigRuntime.layer.pipe(
     Layer.provide(
       Layer.mock(Config.Service)({
@@ -50,6 +51,11 @@ function runtimeLayer(reload: Config.Interface["reload"]) {
         reload: () => Effect.succeed([]),
       }),
     ),
+    Layer.provide(
+      Layer.mock(MCP.Service)({
+        invalidate,
+      }),
+    ),
     Layer.provide(FSUtil.defaultLayer),
   )
 }
@@ -58,6 +64,29 @@ const provideInstance = <A, E, R>(directory: string, effect: Effect.Effect<A, E,
   effect.pipe(Effect.provideService(InstanceRef, instance(directory)))
 
 describe("ConfigRuntime", () => {
+  it.live("invalidates MCP after applying the other runtime services", () =>
+    Effect.gen(function* () {
+      let invalidations = 0
+
+      yield* Effect.gen(function* () {
+        const runtime = yield* ConfigRuntime.Service
+        yield* runtime.invalidate()
+        expect(yield* provideInstance("/workspace/mcp", runtime.ensure())).toBe(1)
+        expect(invalidations).toBe(1)
+      }).pipe(
+        Effect.provide(
+          runtimeLayer(
+            () => Effect.succeed({}),
+            () =>
+              Effect.sync(() => {
+                invalidations++
+              }),
+          ),
+        ),
+      )
+    }),
+  )
+
   it.live("shares one in-flight refresh for concurrent callers in the same directory", () =>
     Effect.gen(function* () {
       const started = yield* Latch.make()

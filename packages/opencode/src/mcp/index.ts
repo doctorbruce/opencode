@@ -28,7 +28,7 @@ import { McpAuth } from "./auth"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { TuiEvent } from "@/server/tui-event"
 import open from "open"
-import { Cause, Effect, Exit, Layer, Context, Schema, Stream } from "effect"
+import { Cause, Effect, Exit, Layer, Context, Schema, Scope, Stream } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -121,6 +121,25 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCPV1.Info {
   return typeof entry === "object" && entry !== null && "type" in entry
 }
 
+function generationFingerprint(config: Record<string, ConfigMCPV1.Info>) {
+  return JSON.stringify(config)
+}
+
+function makeGeneration(config: Record<string, ConfigMCPV1.Info>): Generation {
+  return {
+    fingerprint: generationFingerprint(config),
+    config: { ...config },
+    status: {},
+    clients: {},
+    defs: {},
+    instructions: {},
+    ready: true,
+    leases: 0,
+    retired: false,
+    closed: false,
+  }
+}
+
 function remoteURL(value: string) {
   if (URL.canParse(value)) return new URL(value)
 }
@@ -140,12 +159,22 @@ interface AuthResult {
 
 // --- Effect Service ---
 
-interface State {
+interface Generation {
+  fingerprint: string
   config: Record<string, ConfigMCPV1.Info>
   status: Record<string, Status>
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
   instructions: Record<string, string>
+  ready: boolean
+  leases: number
+  retired: boolean
+  closed: boolean
+}
+
+interface State {
+  current: Generation
+  retired: Set<Generation>
 }
 
 export interface ServerInstructions {
@@ -155,6 +184,7 @@ export interface ServerInstructions {
 }
 
 export interface Interface {
+  readonly invalidate: () => Effect.Effect<void>
   readonly status: () => Effect.Effect<Record<string, Status>>
   readonly clients: () => Effect.Effect<Record<string, MCPClient>>
   readonly instructions: () => Effect.Effect<ServerInstructions[]>
@@ -406,6 +436,7 @@ export const layer = Layer.effect(
       }),
     )
     const cfgSvc = yield* Config.Service
+    const scope = yield* Scope.Scope
 
     const descendants = Effect.fnUntraced(
       function* (pid: number) {
@@ -431,7 +462,7 @@ export const layer = Layer.effect(
       Effect.catch(() => Effect.succeed([] as number[])),
     )
 
-    function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
+    function watch(s: Generation, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
       client.onclose = () => {
         if (s.clients[name] !== client) return
         delete s.clients[name]
@@ -481,68 +512,82 @@ export const layer = Layer.effect(
       }
     }
 
+    const populateGeneration = Effect.fnUntraced(function* (
+      generation: Generation,
+      config: Record<string, ConfigMCPV1.Info>,
+      bridge: EffectBridge.Shape,
+    ) {
+      yield* Effect.forEach(
+        Object.entries(config),
+        ([key, mcp]) =>
+          Effect.gen(function* () {
+            if (!isMcpConfigured(mcp)) {
+              generation.ready = false
+              yield* Effect.logError("Ignoring MCP config entry without type", { key })
+              return
+            }
+
+            if (mcp.enabled === false) {
+              generation.status[key] = { status: "disabled" }
+              return
+            }
+
+            const result = yield* create(key, mcp)
+            generation.status[key] = result.status
+            if (result.status.status !== "connected") generation.ready = false
+            if (result.mcpClient) {
+              generation.clients[key] = result.mcpClient
+              generation.defs[key] = result.defs!
+              if (result.instructions) generation.instructions[key] = result.instructions
+              watch(generation, key, result.mcpClient, bridge, mcp.timeout)
+            }
+          }),
+        { concurrency: "unbounded" },
+      )
+      return generation
+    })
+
+    const closeGeneration = Effect.fnUntraced(function* (generation: Generation) {
+      if (generation.closed) return
+      generation.closed = true
+      const clients = Object.values(generation.clients)
+      generation.clients = {}
+      generation.defs = {}
+      generation.instructions = {}
+      yield* Effect.forEach(
+        clients,
+        (client) =>
+          Effect.gen(function* () {
+            const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
+            if (typeof pid === "number") {
+              const pids = yield* descendants(pid)
+              for (const dpid of pids) {
+                try {
+                  process.kill(dpid, "SIGTERM")
+                } catch {}
+              }
+            }
+            yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
+          }),
+        { concurrency: "unbounded" },
+      )
+    })
+
     const state = yield* InstanceState.make<State>(
       Effect.fn("MCP.state")(function* () {
         const cfg = yield* cfgSvc.get()
         const bridge = yield* EffectBridge.make()
-        const config = cfg.mcp ?? {}
-        const s: State = {
-          config: {},
-          status: {},
-          clients: {},
-          defs: {},
-          instructions: {},
-        }
-
-        yield* Effect.forEach(
-          Object.entries(config),
-          ([key, mcp]) =>
-            Effect.gen(function* () {
-              if (!isMcpConfigured(mcp)) {
-                yield* Effect.logError("Ignoring MCP config entry without type", { key })
-                return
-              }
-
-              if (mcp.enabled === false) {
-                s.status[key] = { status: "disabled" }
-                return
-              }
-
-              const result = yield* create(key, mcp)
-              s.status[key] = result.status
-              if (result.mcpClient) {
-                s.clients[key] = result.mcpClient
-                s.defs[key] = result.defs!
-                if (result.instructions) s.instructions[key] = result.instructions
-                watch(s, key, result.mcpClient, bridge, mcp.timeout)
-              }
-            }),
-          { concurrency: "unbounded" },
-        )
+        const config = Object.fromEntries(
+          Object.entries(cfg.mcp ?? {}).filter(([, mcp]) => isMcpConfigured(mcp)),
+        ) as Record<string, ConfigMCPV1.Info>
+        const current = yield* populateGeneration(makeGeneration(config), config, bridge)
+        const s: State = { current, retired: new Set() }
 
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
-            const clients = Object.values(s.clients)
-            s.clients = {}
-            s.defs = {}
-            s.instructions = {}
-            yield* Effect.forEach(
-              clients,
-              (client) =>
-                Effect.gen(function* () {
-                  const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
-                  if (typeof pid === "number") {
-                    const pids = yield* descendants(pid)
-                    for (const dpid of pids) {
-                      try {
-                        process.kill(dpid, "SIGTERM")
-                      } catch {}
-                    }
-                  }
-                  yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
-                }),
-              { concurrency: "unbounded" },
-            )
+            const generations = [s.current, ...s.retired]
+            s.retired.clear()
+            yield* Effect.forEach(generations, closeGeneration, { concurrency: "unbounded" })
             pendingOAuthTransports.clear()
           }),
         )
@@ -552,10 +597,11 @@ export const layer = Layer.effect(
     )
 
     function closeClient(s: State, name: string) {
-      const client = s.clients[name]
-      delete s.clients[name]
-      delete s.defs[name]
-      delete s.instructions[name]
+      const generation = s.current
+      const client = generation.clients[name]
+      delete generation.clients[name]
+      delete generation.defs[name]
+      delete generation.instructions[name]
       if (!client) return Effect.void
       return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
     }
@@ -569,15 +615,16 @@ export const layer = Layer.effect(
       timeout?: number,
     ) {
       const bridge = yield* EffectBridge.make()
-      const previous = s.clients[name]
-      s.status[name] = { status: "connected" }
-      s.clients[name] = client
-      s.defs[name] = listed
-      if (instructions) s.instructions[name] = instructions
-      else delete s.instructions[name]
-      watch(s, name, client, bridge, timeout)
+      const generation = s.current
+      const previous = generation.clients[name]
+      generation.status[name] = { status: "connected" }
+      generation.clients[name] = client
+      generation.defs[name] = listed
+      if (instructions) generation.instructions[name] = instructions
+      else delete generation.instructions[name]
+      watch(generation, name, client, bridge, timeout)
       if (previous) yield* Effect.tryPromise(() => previous.close()).pipe(Effect.ignore)
-      return s.status[name]
+      return generation.status[name]
     })
 
     const status = Effect.fn("MCP.status")(function* () {
@@ -586,14 +633,15 @@ export const layer = Layer.effect(
       const cfg = yield* cfgSvc.get()
       const config = cfg.mcp ?? {}
       const result: Record<string, Status> = {}
+      const generation = s.current
 
       for (const [key, mcp] of Object.entries(config)) {
         if (!isMcpConfigured(mcp)) continue
-        result[key] = s.status[key] ?? { status: "disabled" }
+        result[key] = generation.status[key] ?? { status: "disabled" }
       }
 
-      for (const key of Object.keys(s.config)) {
-        result[key] = s.status[key] ?? { status: "disabled" }
+      for (const key of Object.keys(generation.config)) {
+        result[key] = generation.status[key] ?? { status: "disabled" }
       }
 
       return result
@@ -601,18 +649,19 @@ export const layer = Layer.effect(
 
     const clients = Effect.fn("MCP.clients")(function* () {
       const s = yield* InstanceState.get(state)
-      return s.clients
+      return s.current.clients
     })
 
     const instructions = Effect.fn("MCP.instructions")(function* () {
       const s = yield* InstanceState.get(state)
-      return Object.entries(s.instructions)
-        .filter(([name]) => s.status[name]?.status === "connected")
+      const generation = s.current
+      return Object.entries(generation.instructions)
+        .filter(([name]) => generation.status[name]?.status === "connected")
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([name, item]) => ({
           name,
           instructions: item,
-          tools: (s.defs[name] ?? []).map((tool) => McpCatalog.toolName(name, tool.name)),
+          tools: (generation.defs[name] ?? []).map((tool) => McpCatalog.toolName(name, tool.name)),
         }))
     })
 
@@ -620,10 +669,9 @@ export const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       const result = yield* create(name, mcp)
 
-      s.status[name] = result.status
+      s.current.status[name] = result.status
       if (!result.mcpClient) {
         yield* closeClient(s, name)
-        delete s.clients[name]
         return result.status
       }
 
@@ -632,9 +680,9 @@ export const layer = Layer.effect(
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCPV1.Info) {
       const s = yield* InstanceState.get(state)
-      s.config[name] = mcp
+      s.current.config[name] = mcp
       yield* createAndStore(name, mcp)
-      return { status: s.status }
+      return { status: s.current.status }
     })
 
     const connect = Effect.fn("MCP.connect")(function* (name: string) {
@@ -646,27 +694,44 @@ export const layer = Layer.effect(
       yield* requireMcpConfig(name)
       const s = yield* InstanceState.get(state)
       yield* closeClient(s, name)
-      delete s.clients[name]
-      s.status[name] = { status: "disabled" }
+      delete s.current.clients[name]
+      s.current.status[name] = { status: "disabled" }
     })
 
     function requestTimeout(s: State, name: string, configured: McpEntry | undefined, fallback?: number) {
       const staticTimeout = configured && isMcpConfigured(configured) ? configured.timeout : undefined
-      return s.config[name]?.timeout ?? staticTimeout ?? fallback
+      return s.current.config[name]?.timeout ?? staticTimeout ?? fallback
     }
+
+    const releaseGeneration = Effect.fnUntraced(function* (s: State, generation: Generation) {
+      if (generation.leases > 0) generation.leases--
+      if (!generation.retired || generation.leases > 0 || generation.closed) return
+      s.retired.delete(generation)
+      yield* closeGeneration(generation)
+    })
+    const scopedGenerations = new WeakMap<Scope.Scope, { state: State; generation: Generation }>()
 
     const tools = Effect.fn("MCP.tools")(function* () {
       const result: Record<string, Tool> = {}
       const s = yield* InstanceState.get(state)
+      const executionScope = yield* Effect.scope
+      const existing = scopedGenerations.get(executionScope)
+      const generation = existing?.state === s && !existing.generation.closed ? existing.generation : s.current
+
+      if (!existing || existing.state !== s || existing.generation.closed) {
+        scopedGenerations.set(executionScope, { state: s, generation })
+        generation.leases++
+        yield* Scope.addFinalizer(executionScope, releaseGeneration(s, generation))
+      }
 
       const cfg = yield* cfgSvc.get()
       const config = cfg.mcp ?? {}
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
-      for (const [clientName, client] of Object.entries(s.clients)) {
-        if (s.status[clientName]?.status !== "connected") continue
+      for (const [clientName, client] of Object.entries(generation.clients)) {
+        if (generation.status[clientName]?.status !== "connected") continue
         const mcpConfig = config[clientName]
-        const listed = s.defs[clientName]
+        const listed = generation.defs[clientName]
         if (!listed) {
           yield* Effect.logWarning("missing cached tools for connected server", { clientName })
           continue
@@ -678,7 +743,69 @@ export const layer = Layer.effect(
         }
       }
       return result
-    })
+    }) as () => Effect.Effect<Record<string, Tool>>
+
+    const refreshes = new Map<string, { pending: boolean; running: boolean }>()
+
+    const runRefresh = (directory: string, refresh: { pending: boolean; running: boolean }): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        while (refresh.pending) {
+          refresh.pending = false
+          const s = yield* InstanceState.get(state)
+          const cfg = yield* cfgSvc.get()
+          const config = Object.fromEntries(
+            Object.entries(cfg.mcp ?? {}).filter(([, mcp]) => isMcpConfigured(mcp)),
+          ) as Record<string, ConfigMCPV1.Info>
+          if (generationFingerprint(config) === s.current.fingerprint) continue
+
+          const bridge = yield* EffectBridge.make()
+          const candidate = makeGeneration(config)
+          const next = yield* populateGeneration(candidate, config, bridge).pipe(
+            Effect.catchCause((cause) =>
+              closeGeneration(candidate).pipe(
+                Effect.andThen(Effect.logWarning("MCP refresh failed", { error: Cause.squash(cause) })),
+                Effect.andThen(Effect.succeed(undefined)),
+              ),
+            ),
+          )
+          if (!next || !next.ready) {
+            if (next) yield* closeGeneration(next)
+            continue
+          }
+
+          const previous = s.current
+          s.current = next
+          previous.retired = true
+          s.retired.add(previous)
+          if (previous.leases === 0) {
+            s.retired.delete(previous)
+            yield* closeGeneration(previous)
+          }
+        }
+      }).pipe(
+        Effect.catchCause(() => Effect.void),
+        Effect.ensuring(
+          Effect.gen(function* () {
+            refresh.running = false
+            if (refresh.pending) {
+              refresh.running = true
+              yield* runRefresh(directory, refresh).pipe(Effect.forkIn(scope, { startImmediately: true }))
+            } else {
+              refreshes.delete(directory)
+            }
+          }),
+        ),
+      )
+
+    const invalidate = Effect.fn("MCP.invalidate")(function* () {
+      const directory = yield* InstanceState.directory
+      const refresh = refreshes.get(directory) ?? { pending: false, running: false }
+      refresh.pending = true
+      refreshes.set(directory, refresh)
+      if (refresh.running) return
+      refresh.running = true
+      yield* runRefresh(directory, refresh).pipe(Effect.forkIn(scope, { startImmediately: true }))
+    }) as Interface["invalidate"]
 
     function collectFromConnected<T extends { name: string }>(
       s: State,
@@ -689,9 +816,11 @@ export const layer = Layer.effect(
     ) {
       return Effect.gen(function* () {
         const cfg = yield* cfgSvc.get()
+        const generation = s.current
         return yield* Effect.forEach(
-          Object.entries(s.clients).filter(
-            ([name]) => s.status[name]?.status === "connected" && (!targetClientName || name === targetClientName),
+          Object.entries(generation.clients).filter(
+            ([name]) =>
+              generation.status[name]?.status === "connected" && (!targetClientName || name === targetClientName),
           ),
           ([clientName, client]) =>
             McpCatalog.fetch(
@@ -737,7 +866,7 @@ export const layer = Layer.effect(
       meta?: Record<string, unknown>,
     ) {
       const s = yield* InstanceState.get(state)
-      const client = s.clients[clientName]
+      const client = s.current.clients[clientName]
       if (!client) {
         yield* Effect.logWarning(`client not found for ${label}`, { clientName })
         return undefined
@@ -782,7 +911,7 @@ export const layer = Layer.effect(
 
     const getMcpConfig = Effect.fnUntraced(function* (mcpName: string) {
       const s = yield* InstanceState.get(state)
-      if (s.config[mcpName]) return s.config[mcpName]
+      if (s.current.config[mcpName]) return s.current.config[mcpName]
 
       const cfg = yield* cfgSvc.get()
       const mcpConfig = cfg.mcp?.[mcpName]
@@ -967,7 +1096,7 @@ export const layer = Layer.effect(
 
     const getAuthStatus = Effect.fn("MCP.getAuthStatus")(function* (mcpName: string) {
       const runtimeConfig = (yield* InstanceState.has(state))
-        ? (yield* InstanceState.get(state)).config[mcpName]
+        ? (yield* InstanceState.get(state)).current.config[mcpName]
         : undefined
       const mcpConfig = runtimeConfig ?? (yield* cfgSvc.get()).mcp?.[mcpName]
       if (!mcpConfig || !isMcpConfigured(mcpConfig) || mcpConfig.type !== "remote") return "not_authenticated"
@@ -978,6 +1107,7 @@ export const layer = Layer.effect(
     })
 
     return Service.of({
+      invalidate,
       status,
       clients,
       instructions,

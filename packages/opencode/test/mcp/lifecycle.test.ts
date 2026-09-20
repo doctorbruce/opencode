@@ -2,9 +2,15 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { expect, mock, beforeEach } from "bun:test"
 import { ListRootsRequestSchema, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js"
-import { Cause, Effect, Exit } from "effect"
+import { Cause, Effect, Exit, Layer, Scope } from "effect"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
+import { Config } from "../../src/config/config"
 import type { MCP as MCPNS } from "../../src/mcp/index"
-import { testEffect } from "../lib/effect"
+import { EventV2Bridge } from "../../src/event-v2-bridge"
+import { McpAuth } from "../../src/mcp/auth"
+import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { pollWithTimeout, testEffect } from "../lib/effect"
 import { TestInstance } from "../fixture/fixture"
 
 // --- Mock infrastructure ---
@@ -269,6 +275,7 @@ beforeEach(() => {
   connectError = "Mock transport cannot connect"
   clientCreateCount = 0
   transportCloseCount = 0
+  refreshConfig = { mcp: { "old-server": { type: "local", command: ["echo", "test"] } } }
 })
 
 // Import after mocks
@@ -276,11 +283,103 @@ const { MCP } = await import("../../src/mcp/index")
 const { McpOAuthCallback } = await import("../../src/mcp/oauth-callback")
 
 const it = testEffect(MCP.defaultLayer)
+let refreshConfig: ConfigV1.Info = {
+  mcp: { "old-server": { type: "local", command: ["echo", "test"] } },
+}
+const refreshIt = testEffect(
+  MCP.layer.pipe(
+    Layer.provide(
+      Layer.succeed(
+        Config.Service,
+        Config.Service.of({
+          get: () => Effect.succeed(refreshConfig),
+          getGlobal: () => Effect.succeed({}),
+          getConsoleState: () => Effect.succeed({ consoleManagedProviders: [], switchableOrgCount: 0 }),
+          update: () => Effect.void,
+          updateGlobal: () => Effect.succeed({ info: {}, changed: false }),
+          reload: () => Effect.succeed(refreshConfig),
+          invalidate: () => Effect.void,
+          directories: () => Effect.succeed([]),
+        }),
+      ),
+    ),
+    Layer.provide(McpAuth.defaultLayer),
+    Layer.provide(EventV2Bridge.defaultLayer),
+    Layer.provide(CrossSpawnSpawner.defaultLayer),
+    Layer.provide(FSUtil.defaultLayer),
+  ),
+)
 
 function statusName(status: Record<string, MCPNS.Status> | MCPNS.Status, server: string) {
   if ("status" in status) return status.status
   return status[server]?.status
 }
+
+refreshIt.instance(
+  "invalidate swaps MCP generations without closing leased clients",
+  () =>
+    MCP.Service.use((mcp: MCPNS.Interface) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "old-server"
+        const oldState = getOrCreateClientState("old-server")
+        oldState.tools = [{ name: "old_tool", inputSchema: { type: "object", properties: {} } }]
+
+        const leaseScope = yield* Scope.make()
+        const before = yield* mcp.tools().pipe(Effect.provideService(Scope.Scope, leaseScope))
+        expect(before["old-server_old_tool"]).toBeDefined()
+
+        refreshConfig = { mcp: { "new-server": { type: "local", command: ["echo", "test"] } } }
+        lastCreatedClientName = "new-server"
+        const newState = getOrCreateClientState("new-server")
+        newState.tools = [{ name: "new_tool", inputSchema: { type: "object", properties: {} } }]
+        yield* mcp.invalidate()
+
+        yield* pollWithTimeout(
+          mcp.clients().pipe(Effect.map((clients) => (clients["new-server"] ? clients : undefined))),
+          "MCP generation did not refresh",
+        )
+        const nextScope = yield* Scope.make()
+        const after = yield* mcp.tools().pipe(Effect.provideService(Scope.Scope, nextScope))
+        expect(after["new-server_new_tool"]).toBeDefined()
+        const stillBefore = yield* mcp.tools().pipe(Effect.provideService(Scope.Scope, leaseScope))
+        expect(stillBefore["old-server_old_tool"]).toBeDefined()
+        expect(oldState.closed).toBe(false)
+        yield* Scope.close(leaseScope, Exit.void)
+        expect(oldState.closed).toBe(true)
+        yield* Scope.close(nextScope, Exit.void)
+      }),
+    ),
+  { config: {} },
+)
+
+refreshIt.instance(
+  "invalidate keeps the active generation when the replacement cannot connect",
+  () =>
+    MCP.Service.use((mcp: MCPNS.Interface) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "old-server"
+        const oldState = getOrCreateClientState("old-server")
+        oldState.tools = [{ name: "old_tool", inputSchema: { type: "object", properties: {} } }]
+        const before = yield* mcp.tools()
+        expect(before["old-server_old_tool"]).toBeDefined()
+
+        refreshConfig = { mcp: { "new-server": { type: "local", command: ["echo", "test"] } } }
+        lastCreatedClientName = "new-server"
+        connectShouldFail = true
+        yield* mcp.invalidate()
+
+        yield* pollWithTimeout(
+          Effect.sync(() => (clientCreateCount > 1 ? true : undefined)),
+          "MCP replacement connection was not attempted",
+        )
+        const after = yield* mcp.tools()
+        expect(after["old-server_old_tool"]).toBeDefined()
+        expect(after["new-server_test_tool"]).toBeUndefined()
+        expect(oldState.closed).toBe(false)
+      }),
+    ),
+  { config: {} },
+)
 
 it.instance(
   "advertises and lists the instance directory as its root",

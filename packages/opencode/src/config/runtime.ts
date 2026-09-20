@@ -4,6 +4,7 @@ import { Agent } from "@/agent/agent"
 import { InstanceState } from "@/effect/instance-state"
 import { Provider } from "@/provider/provider"
 import { Skill } from "@/skill"
+import { MCP } from "@/mcp"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { KeyedMutex } from "@opencode-ai/core/effect/keyed-mutex"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -45,6 +46,7 @@ export const layer = Layer.effect(
     const fs = yield* FSUtil.Service
     const provider = yield* Provider.Service
     const skill = yield* Skill.Service
+    const mcp = yield* MCP.Service
     const scope = yield* Scope.Scope
     const publication = Semaphore.makeUnsafe(1)
     const locks = KeyedMutex.makeUnsafe<string>()
@@ -101,6 +103,7 @@ export const layer = Layer.effect(
       yield* provider.reload()
       yield* agent.reload()
       yield* skill.reload()
+      yield* mcp.invalidate()
       applied.set(directory, target)
       yield* Effect.logInfo("runtime config applied", { directory, epoch: target })
       return target
@@ -166,10 +169,11 @@ export const defaultLayer = layer.pipe(
   Layer.provide(FSUtil.defaultLayer),
   Layer.provide(Provider.defaultLayer),
   Layer.provide(Skill.defaultLayer),
+  Layer.provide(MCP.defaultLayer),
 )
 
 export const node = LayerNode.make({
   service: Service,
   layer,
-  deps: [Agent.node, Config.node, FSUtil.node, Provider.node, Skill.node],
+  deps: [Agent.node, Config.node, FSUtil.node, Provider.node, Skill.node, MCP.node],
 })

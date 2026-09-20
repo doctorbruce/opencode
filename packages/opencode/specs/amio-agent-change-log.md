@@ -549,3 +549,13 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Job status lines now carry wall time (`[status: completed] [wall time: 1m3s]`, plus `wallTimeMs` in the tool metadata) for `job_output`, `job_kill`, and the `bash` background handle, and completion notices report how long the job ran — Codex reports the same as `wall_time_seconds`.
 - The job registry now drops settled jobs beyond 64 when a new job starts (`prune({ keep })` is exposed for explicit calls), so long sessions cannot accumulate finished job output in memory. This needed a small addition to the shared `packages/core/src/background-job.ts` registry — the same service the V1 wrapper and the background `task` mode already use; no V2 session or tool code was touched.
 - Tests: `test/tool/job.test.ts` covers reads, bounded waits, cancellation, retention pruning, and ownership. Shell (111), job (7), and tool-progress (13) suites pass. Two failures elsewhere are pre-existing on this baseline: the MCP instruction wording mismatch and `tool.task > execute shapes child permissions`, which the `app = "amio"` rename moved by changing the truncation-dir permission pattern (both reproduce with these changes stashed).
+
+## 2026-09-19
+
+### MCP soft invalidation generations
+
+- Added `MCP.invalidate()` and wired it into `ConfigRuntime.refreshAt()` after the config, provider, agent, and skill reloads.
+- MCP invalidation now builds a new client generation in the background and swaps it only after all configured servers connect successfully; a failed generation leaves the active generation untouched.
+- `MCP.tools()` leases the generation used by a prompt, so an in-flight prompt keeps its original MCP clients alive while later prompts use the new generation. Retired generations close after their leases are released.
+- Coalesced repeated invalidations per instance directory and skipped reconnects when the MCP configuration fingerprint is unchanged.
+- Added lifecycle coverage for generation swapping and ConfigRuntime coverage for MCP invalidation; package typecheck and the MCP lifecycle/config runtime suites pass.
