@@ -36,6 +36,7 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
 import { Reference } from "@opencode-ai/core/reference"
 import { Location } from "@opencode-ai/core/location"
 import { PluginV2 } from "@opencode-ai/core/plugin"
+import { ConfigAgentV1 } from "@opencode-ai/core/v1/config/agent"
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -56,6 +57,7 @@ export const Info = Schema.Struct({
   ),
   variant: Schema.optional(Schema.String),
   prompt: Schema.optional(Schema.String),
+  skills: Schema.optional(Schema.Array(ConfigAgentV1.Skill)),
   options: Schema.Record(Schema.String, Schema.Unknown),
   steps: Schema.optional(Schema.Finite),
 }).annotate({ identifier: "Agent" })
@@ -289,6 +291,7 @@ export const layer = Layer.effect(
           if (value.model) item.model = Provider.parseModel(value.model)
           item.variant = value.variant ?? item.variant
           item.prompt = value.prompt ?? item.prompt
+          item.skills = value.skills ?? item.skills
           item.description = value.description ?? item.description
           item.temperature = value.temperature ?? item.temperature
           item.topP = value.top_p ?? item.topP

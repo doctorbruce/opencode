@@ -9,6 +9,13 @@ const Color = Schema.Union([
   Schema.Literals(["primary", "secondary", "accent", "success", "warning", "error", "info"]),
 ])
 
+export const Skill = Schema.Struct({
+  name: Schema.String,
+  description: Schema.optional(Schema.String),
+  descriptions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+})
+export type Skill = Schema.Schema.Type<typeof Skill>
+
 const AgentSchema = Schema.StructWithRest(
   Schema.Struct({
     displayName: Schema.optional(Schema.String).annotate({
@@ -38,6 +45,7 @@ const AgentSchema = Schema.StructWithRest(
       description: "Maximum number of agentic iterations before forcing text-only response",
     }),
     maxSteps: Schema.optional(PositiveInt).annotate({ description: "@deprecated Use 'steps' field instead." }),
+    skills: Schema.optional(Schema.mutable(Schema.Array(Skill))),
     permission: Schema.optional(ConfigPermissionV1.Info),
   }),
   [Schema.Record(Schema.String, Schema.Any)],
@@ -57,6 +65,7 @@ const KNOWN_KEYS = new Set([
   "color",
   "steps",
   "maxSteps",
+  "skills",
   "options",
   "permission",
   "disable",

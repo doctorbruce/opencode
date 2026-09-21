@@ -127,7 +127,10 @@ export const layer = Layer.effect(
         const disabledTools = Permission.disabled(["skill", "skill_search"], agent.permission)
         if (disabledTools.has("skill")) return
         const searchAllowed = !disabledTools.has("skill_search")
-        const skillIndex = renderSkillIndex(yield* skill.available(agent), language)
+        const configuredSkills = agent.skills?.filter(
+          (item) => Permission.evaluate("skill", item.name, agent.permission).action !== "deny",
+        )
+        const skillIndex = renderSkillIndex(configuredSkills ?? (yield* skill.available(agent)), language)
 
         if (language === "zh")
           return [
@@ -178,7 +181,9 @@ export const defaultLayer = layer.pipe(
 
 const SKILL_DESCRIPTION_LIMIT = 160
 
-function renderSkillIndex(skills: Skill.Info[], language: PromptLanguage) {
+type SkillSummary = Pick<Skill.Info, "name" | "description" | "descriptions">
+
+function renderSkillIndex(skills: readonly SkillSummary[], language: PromptLanguage) {
   if (skills.length === 0) {
     return language === "zh" ? "当前没有可用专项技能。" : "No specialized skills are currently available."
   }
@@ -194,7 +199,7 @@ function renderSkillIndex(skills: Skill.Info[], language: PromptLanguage) {
   return lines.join("\n")
 }
 
-function skillDescription(skill: Skill.Info, language: PromptLanguage) {
+function skillDescription(skill: SkillSummary, language: PromptLanguage) {
   const localized =
     language === "zh"
       ? skill.descriptions?.["zh-CN"]

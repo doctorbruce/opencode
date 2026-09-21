@@ -215,6 +215,37 @@ it.instance(
 )
 
 it.instance(
+  "custom agent preserves configured skill summaries",
+  () =>
+    Effect.gen(function* () {
+      const custom = yield* load((svc) => svc.get("skill_agent"))
+      expect(custom?.skills).toEqual([
+        {
+          name: "astron-search",
+          description: "Search and verify web information.",
+          descriptions: { "zh-CN": "搜索并核验网页信息。" },
+        },
+      ])
+      expect(custom?.options.skills).toBeUndefined()
+    }),
+  {
+    config: {
+      agent: {
+        skill_agent: {
+          skills: [
+            {
+              name: "astron-search",
+              description: "Search and verify web information.",
+              descriptions: { "zh-CN": "搜索并核验网页信息。" },
+            },
+          ],
+        },
+      },
+    },
+  },
+)
+
+it.instance(
   "custom agent config overrides native agent properties",
   () =>
     Effect.gen(function* () {

@@ -559,3 +559,12 @@ bun run script/build.ts --single --amio-agent --skip-install
 - `MCP.tools()` leases the generation used by a prompt, so an in-flight prompt keeps its original MCP clients alive while later prompts use the new generation. Retired generations close after their leases are released.
 - Coalesced repeated invalidations per instance directory and skipped reconnects when the MCP configuration fingerprint is unchanged.
 - Added lifecycle coverage for generation swapping and ConfigRuntime coverage for MCP invalidation; package typecheck and the MCP lifecycle/config runtime suites pass.
+
+## 2026-09-21
+
+### Lazy Astron skill prompt index
+
+- Added optional lightweight skill summaries to configured agents. Astron-projected agents now carry only each assigned skill's name and localized descriptions, so prompt construction does not initialize the workspace-wide skill catalog.
+- Changed the `skill` loader to parse a directly named skill on first invocation and cache only that skill. Full catalog loading remains available for generic agents, explicit skill search/list operations, and compatibility with skill names that do not match their directory.
+- Preserved the existing generic OpenCode fallback when an agent does not provide a skill summary list; an explicit empty list means the configured agent has no assigned skills.
+- Added regression coverage for config preservation, catalog-free prompt rendering, direct lazy body loading, and Astron's runtime projection.

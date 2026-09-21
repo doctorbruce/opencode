@@ -378,6 +378,31 @@ description: A skill in the .claude/skills directory.
     ),
   )
 
+  itWithoutExternalSkills.live("loads only the requested skill body", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const target = path.join(dir, ".opencode", "skill", "target-skill", "SKILL.md")
+          const unrelated = path.join(dir, ".opencode", "skill", "unrelated-skill", "SKILL.md")
+          yield* Effect.promise(() =>
+            Promise.all([
+              Bun.write(target, "---\nname: target-skill\ndescription: Target.\n---\n\nTarget body."),
+              Bun.write(unrelated, "---\nname: unrelated-skill\ndescription: Unrelated.\n---\n\nBefore."),
+            ]),
+          )
+
+          const skill = yield* Skill.Service
+          expect((yield* skill.require("target-skill")).content).toContain("Target body.")
+          yield* Effect.promise(() =>
+            Bun.write(unrelated, "---\nname: unrelated-skill\ndescription: Unrelated.\n---\n\nAfter."),
+          )
+
+          expect((yield* skill.require("unrelated-skill")).content).toContain("After.")
+        }),
+      { git: true },
+    ),
+  )
+
   it.effect("exposes tagged expected skill failure classes", () =>
     Effect.sync(() => {
       const invalid = new Skill.InvalidError({ path: "/tmp/SKILL.md", message: "Invalid skill frontmatter" })

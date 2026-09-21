@@ -149,6 +149,17 @@ const bulkSkills: Skill.Info[] = Array.from({ length: 55 }, (_, index) => ({
   content: `# bulk-skill-${index + 1}`,
 }))
 const bulkIt = testEffect(systemPromptTestLayer(bulkSkills))
+const configuredSkillIt = testEffect(
+  SystemPrompt.layer.pipe(
+    Layer.provide(locationServiceMapLayer),
+    Layer.provide(mcpTestLayer),
+    Layer.provide(
+      Layer.mock(Skill.Service, {
+        available: () => Effect.die(new Error("configured skill summaries must not load the skill catalog")),
+      }),
+    ),
+  ),
+)
 
 describe("session.system", () => {
   test("uses the English provider prompt by default", () => {
@@ -223,6 +234,27 @@ describe("session.system", () => {
       expect(output).not.toContain("<available_skills>")
       expect(output).not.toContain("/tmp/alpha-skill")
       expect(output).not.toContain("# alpha-skill")
+    }),
+  )
+
+  configuredSkillIt.effect("renders configured skill summaries without loading the skill catalog", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const output = yield* prompt.skills(
+        {
+          ...build,
+          skills: [
+            {
+              name: "astron-search",
+              description: "Search and verify web information.",
+              descriptions: { "zh-CN": "搜索并核验网页信息。" },
+            },
+          ],
+        },
+        "zh",
+      )
+
+      expect(output).toContain("- astron-search: 搜索并核验网页信息。")
     }),
   )
 

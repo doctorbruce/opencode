@@ -43,6 +43,15 @@ export const Info = Schema.Struct({
 })
 export type Info = Schema.Schema.Type<typeof Info>
 
+function customizeOpencodeSkill(): Info {
+  return {
+    name: CUSTOMIZE_OPENCODE_SKILL_NAME,
+    description: CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION,
+    location: "<built-in>",
+    content: CUSTOMIZE_OPENCODE_SKILL_BODY,
+  }
+}
+
 const Issue = Schema.StructWithRest(
   Schema.Struct({
     message: Schema.String,
@@ -356,13 +365,14 @@ export const layer = Layer.effect(
         const s: State = { skills: {}, dirs: new Set() }
         // Register the built-in skill BEFORE disk discovery so a user-disk
         // skill with the same name can override it.
-        s.skills[CUSTOMIZE_OPENCODE_SKILL_NAME] = {
-          name: CUSTOMIZE_OPENCODE_SKILL_NAME,
-          description: CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION,
-          location: "<built-in>",
-          content: CUSTOMIZE_OPENCODE_SKILL_BODY,
-        }
+        s.skills[CUSTOMIZE_OPENCODE_SKILL_NAME] = customizeOpencodeSkill()
         yield* loadSkills(s, yield* InstanceState.get(discovered), events)
+        return s
+      }),
+    )
+    const loaded = yield* InstanceState.make(
+      Effect.fn("Skill.loaded")(function* () {
+        const s: State = { skills: {}, dirs: new Set() }
         return s
       }),
     )
@@ -373,6 +383,29 @@ export const layer = Layer.effect(
     })
 
     const require = Effect.fn("Skill.require")(function* (name: string) {
+      if (!(yield* InstanceState.has(state))) {
+        const cached = yield* InstanceState.get(loaded)
+        const cachedInfo = cached.skills[name]
+        if (cachedInfo) return cachedInfo
+
+        const matches = (yield* InstanceState.get(discovered)).matches.filter(
+          (match) => path.basename(path.dirname(match)) === name,
+        )
+        const direct: State = { skills: {}, dirs: new Set() }
+        yield* Effect.forEach(matches, (match) => add(direct, match, events), {
+          concurrency: "unbounded",
+          discard: true,
+        })
+        const directInfo = direct.skills[name]
+        if (directInfo) {
+          cached.skills[name] = directInfo
+          cached.dirs.add(path.dirname(directInfo.location))
+          return directInfo
+        }
+
+        if (name === CUSTOMIZE_OPENCODE_SKILL_NAME) return customizeOpencodeSkill()
+      }
+
       const s = yield* InstanceState.get(state)
       const info = s.skills[name]
       if (info) return info
@@ -387,6 +420,7 @@ export const layer = Layer.effect(
     const reload = Effect.fn("Skill.reload")(function* () {
       yield* InstanceState.invalidate(discovered)
       yield* InstanceState.invalidate(state)
+      yield* InstanceState.invalidate(loaded)
       return yield* all()
     })
 
