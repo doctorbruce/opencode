@@ -396,6 +396,55 @@ describe("session HttpApi", () => {
     { git: true, config: { formatter: false, lsp: false } },
   )
 
+  it.instance(
+    "imports a portable transcript by replacing existing messages",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const headers = { "x-opencode-directory": test.directory, "content-type": "application/json" }
+        const session = yield* createSession({ title: "before import" })
+        yield* createTextMessage(session.id, "old message")
+
+        const imported = yield* requestJson<SessionV1.WithParts[]>(
+          pathFor(SessionPaths.importSession, { sessionID: session.id }),
+          {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              schemaVersion: 1,
+              source: {
+                astronSessionId: "astron-session",
+                coreId: "pie",
+                sessionId: "pie-session",
+              },
+              title: "after import",
+              transcript: [
+                {
+                  role: "user",
+                  content: [{ type: "text", text: "portable question" }],
+                  createdAt: 100,
+                },
+                {
+                  role: "assistant",
+                  content: [{ type: "text", text: "portable answer" }],
+                  createdAt: 200,
+                },
+              ],
+            }),
+          },
+        )
+
+        expect(imported).toHaveLength(2)
+        expect(imported.map((message) => message.info.role)).toEqual(["user", "assistant"])
+        expect(imported[0]?.parts).toMatchObject([{ type: "text", text: "portable question" }])
+        expect(imported[1]?.parts).toMatchObject([{ type: "text", text: "portable answer" }])
+        expect(
+          yield* requestJson<Session.Info>(pathFor(SessionPaths.get, { sessionID: session.id }), { headers }),
+        ).toMatchObject({ title: "after import" })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
   it.live("uses the explicit request directory for prompt requests", () =>
     Effect.gen(function* () {
       const llm = yield* TestLLMServer

@@ -577,3 +577,10 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Models whose advertised maximum output equals their full context window no longer compact immediately on the first prompt.
 - Explicit compaction thresholds can trigger earlier but are capped at the automatic safe limit, preventing a global threshold from exceeding a smaller model's usable context.
 - Added regression coverage for equal context/output limits, the 90% boundary, explicit-threshold clamping, and equivalent input-limit behavior.
+
+### Portable session import
+
+- Added a typed `PUT /session/:sessionID/import` endpoint that replaces an idle session's messages from a versioned portable Agent Core transcript and optionally updates its title.
+- Added conversion for user, system, and assistant transcript entries, including text, thought, file, and tool parts, while preserving valid source identifiers when possible.
+- Rejects imports while the target session is busy and validates the complete payload before removing existing messages.
+- Added HTTP API regression coverage for replacing an existing conversation and returning the imported transcript.

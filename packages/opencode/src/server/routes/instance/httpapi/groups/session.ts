@@ -25,6 +25,7 @@ import { described } from "./metadata"
 import { QueryBoolean } from "./query"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
+import { SessionTransfer } from "@/session/transfer"
 
 const root = "/session"
 export const ListQuery = Schema.Struct({
@@ -74,6 +75,7 @@ export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput
 export const PermissionResponsePayload = Schema.Struct({
   response: PermissionV1.Reply,
 })
+export const ImportPayload = SessionTransfer
 
 export const SessionPaths = {
   list: root,
@@ -102,6 +104,7 @@ export const SessionPaths = {
   deleteMessage: `${root}/:sessionID/message/:messageID`,
   deletePart: `${root}/:sessionID/message/:messageID/part/:partID`,
   updatePart: `${root}/:sessionID/message/:messageID/part/:partID`,
+  importSession: `${root}/:sessionID/import`,
 } as const
 
 export const SessionApi = HttpApi.make("session")
@@ -235,6 +238,19 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.update",
             summary: "Update session",
             description: "Update properties of an existing session, such as title or other metadata.",
+          }),
+        ),
+        HttpApiEndpoint.put("importSession", SessionPaths.importSession, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          payload: ImportPayload,
+          success: described(Schema.Array(SessionV1.WithParts), "Imported session messages"),
+          error: [HttpApiError.BadRequest, ApiNotFoundError, SessionBusyError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.import",
+            summary: "Import session",
+            description: "Replace one idle session's conversation with a portable Agent Core transcript.",
           }),
         ),
         HttpApiEndpoint.post("fork", SessionPaths.fork, {

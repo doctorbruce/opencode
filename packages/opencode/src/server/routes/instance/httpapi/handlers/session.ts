@@ -15,6 +15,7 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
+import { toOpenCodeMessages } from "@/session/transfer"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
@@ -26,6 +27,7 @@ import {
   DiffQuery,
   ForkPayload,
   InitPayload,
+  ImportPayload,
   ListQuery,
   MessagesQuery,
   PermissionResponsePayload,
@@ -199,6 +201,29 @@ export const sessionHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "sess
         yield* session.setArchived({ sessionID: ctx.params.sessionID, time: ctx.payload.time.archived ?? undefined })
       }
       return yield* requireSession(ctx.params.sessionID)
+    })
+
+    const importSession = Effect.fn("SessionHttpApi.importSession")(function* (ctx: {
+      params: { sessionID: SessionID }
+      payload: typeof ImportPayload.Type
+    }) {
+      const current = yield* requireSession(ctx.params.sessionID)
+      yield* SessionError.mapBusy(runState.assertNotBusy(ctx.params.sessionID))
+      const existing = yield* SessionError.mapStorageNotFound(session.messages({ sessionID: ctx.params.sessionID }))
+      const defaultAgent = yield* agentSvc.defaultAgent()
+      const imported = yield* Effect.try({
+        try: () => toOpenCodeMessages({ transfer: ctx.payload, session: current, defaultAgent }),
+        catch: () => new HttpApiError.BadRequest({}),
+      })
+      for (const message of existing) yield* session.removeMessage({ sessionID: ctx.params.sessionID, messageID: message.info.id })
+      for (const message of imported) {
+        yield* session.updateMessage(message.info)
+        for (const part of message.parts) yield* session.updatePart(part)
+      }
+      if (ctx.payload.title !== undefined) {
+        yield* session.setTitle({ sessionID: ctx.params.sessionID, title: ctx.payload.title })
+      }
+      return yield* SessionError.mapStorageNotFound(session.messages({ sessionID: ctx.params.sessionID }))
     })
 
     const fork = Effect.fn("SessionHttpApi.fork")(function* (ctx: {
@@ -420,6 +445,7 @@ export const sessionHandlers = HttpApiBuilder.group(SharedInstanceHttpApi, "sess
       .handleRaw("create", createRaw)
       .handle("remove", remove)
       .handle("update", update)
+      .handle("importSession", importSession)
       .handleRaw("fork", forkRaw)
       .handle("abort", abort)
       .handle("init", init)
