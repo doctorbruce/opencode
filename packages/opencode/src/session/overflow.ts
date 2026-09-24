@@ -14,9 +14,7 @@ export function usable(input: { cfg: ConfigV1.Info; model: Provider.Model; outpu
   const reserved =
     input.cfg.compaction?.reserved ??
     Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
-  return input.model.limit.input
-    ? Math.max(0, input.model.limit.input - reserved)
-    : Math.max(0, context - ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
+  return Math.min(Math.floor(context * 0.9), Math.max(0, (input.model.limit.input || context) - reserved))
 }
 
 export function isOverflow(input: {
@@ -29,7 +27,8 @@ export function isOverflow(input: {
 
   const count =
     input.tokens.total || input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
-  if (input.cfg.compaction?.threshold_tokens !== undefined) return count >= input.cfg.compaction.threshold_tokens
-  if (input.model.limit.context === 0) return false
-  return count >= usable(input)
+  const threshold = input.cfg.compaction?.threshold_tokens
+  if (input.model.limit.context === 0) return threshold === undefined ? false : count >= threshold
+  const limit = usable(input)
+  return count >= (threshold === undefined ? limit : Math.min(threshold, limit))
 }

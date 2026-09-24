@@ -568,3 +568,12 @@ bun run script/build.ts --single --amio-agent --skip-install
 - Changed the `skill` loader to parse a directly named skill on first invocation and cache only that skill. Full catalog loading remains available for generic agents, explicit skill search/list operations, and compatibility with skill names that do not match their directory.
 - Preserved the existing generic OpenCode fallback when an agent does not provide a skill summary list; an explicit empty list means the configured agent has no assigned skills.
 - Added regression coverage for config preservation, catalog-free prompt rendering, direct lazy body loading, and Astron's runtime projection.
+
+## 2026-09-24
+
+### Safe automatic compaction threshold
+
+- Automatic compaction now uses the smaller of 90% of the model context window and the input capacity after reserving the configured or practical output buffer.
+- Models whose advertised maximum output equals their full context window no longer compact immediately on the first prompt.
+- Explicit compaction thresholds can trigger earlier but are capped at the automatic safe limit, preventing a global threshold from exceeding a smaller model's usable context.
+- Added regression coverage for equal context/output limits, the 90% boundary, explicit-threshold clamping, and equivalent input-limit behavior.
